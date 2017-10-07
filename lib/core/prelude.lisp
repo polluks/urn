@@ -1,5 +1,5 @@
 (import core/base (lambda defun defmacro progn for while if quasiquote const-val and or
-                   xpcall pcall values-list gensym tostring tonumber getmetatable require
+                   xpcall pcall values-list gensym tostring tonumber getmetatable
                    => <=> unpack list when unless arg apply for-pairs first second third
                    setmetatable n else fourth fifth sixth seventh ninth tenth + - * / % ^
                    slice ! not = /= < <= >= > ..) :export)
@@ -18,6 +18,8 @@
 (import lua/io (write) :export)
 (import lua/io io :export)
 (import lua/math math :export)
+
+(import compiler (flag?))
 
 (define *standard-output*
   "The standard output stream."
@@ -97,3 +99,12 @@
    out = nil
    ```"
   (print! (apply sprintf fmt args)))
+
+(defmacro require (cnd (error "requirement not met"))
+  "Require that some condition CND is true (or otherwise truthy),
+   otherwise error with the message ERROR, unless the flag
+   `strip-requirements` is given"
+  (if (flag? "strip-requirements")
+    `true
+    `(unless ,cnd
+       (error! (.. ,("requirement " (pretty cnd) ": ") ,error) 2))))
