@@ -20,6 +20,8 @@
 (import urn/resolve/scope scope)
 (import urn/resolve/state state)
 
+(import lua/basic (require))
+
 (define history-path
   "The path for the history file."
   :hidden
