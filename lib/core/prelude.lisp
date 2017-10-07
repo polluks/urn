@@ -1,5 +1,5 @@
 (import core/base (lambda defun defmacro progn for while if quasiquote const-val and or
-                   xpcall pcall values-list gensym tostring tonumber getmetatable
+                   xpcall pcall values-list gensym tostring tonumber getmetatable require
                    => <=> unpack list when unless arg apply for-pairs first second third
                    setmetatable n else fourth fifth sixth seventh ninth tenth + - * / % ^
                    slice ! not = /= < <= >= > ..) :export)
@@ -100,11 +100,3 @@
    ```"
   (print! (apply sprintf fmt args)))
 
-(defmacro require (cnd (error "requirement not met"))
-  "Require that some condition CND is true (or otherwise truthy),
-   otherwise error with the message ERROR, unless the flag
-   `strip-requirements` is given"
-  (if (flag? "strip-requirements")
-    `true
-    `(unless ,cnd
-       (error! (.. ,("requirement " (pretty cnd) ": ") ,error) 2))))

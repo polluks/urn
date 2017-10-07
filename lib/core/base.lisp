@@ -1,10 +1,11 @@
 (import lua/basic (get-idx set-idx! getmetatable setmetatable type# print pcall xpcall
-                   tostring tonumber require error len# = /= < <= > >= + - * / % ^
+                   tostring tonumber error len# = /= < <= > >= + - * / % ^
                    ..) :export)
-(import lua/basic ())
+(import lua/basic (next arg#))
 (import lua/string string)
 (import lua/table (unpack concat) :export)
 (import lua/table table)
+(import compiler (flag?))
 
 (define else
   "[[else]] is defined as having the value `true`. Use it as the
@@ -401,19 +402,17 @@
   :hidden
   (if (= (type# val) "table")
     (cond
-      ((= (get-idx val "tag") "list")
-        (with (first (car val))
-          ;; Don't expand "unquote" and "unquote-splice" calls, otherwise recurse into the children
-          (unless (and (= (type# first) "table") (= (get-idx first "tag") "symbol")
-                (or (= (get-idx first "contents") "unquote") (= (get-idx first "contents") "unquote-splice")))
-            (for i 1 (n val) 1
-              (set-idx! val i (quasiquote# (get-idx val i)))))
-          val))
-
-      ((= (get-idx val "tag") "symbol")
-        (list `unquote `(quote ,val)))
-
-      (else val))
+      [(= (get-idx val "tag") "list")
+       (with (first (car val))
+         ;; Don't expand "unquote" and "unquote-splice" calls, otherwise recurse into the children
+         (unless (and (= (type# first) "table") (= (get-idx first "tag") "symbol")
+                      (or (= (get-idx first "contents") "unquote") (= (get-idx first "contents") "unquote-splice")))
+           (for i 1 (n val) 1
+             (set-idx! val i (quasiquote# (get-idx val i)))))
+         val)]
+      [(= (get-idx val "tag") "symbol")
+       (list `unquote `(quote ,val))]
+      [else val])
     val))
 
 (defmacro quasiquote (val)
@@ -473,3 +472,26 @@
                    (get-idx ,'rest ,i))))
     (set-idx! out :n 10)
     out)
+
+(defmacro require (cnd (msg "requirement not met"))
+  "Require that some condition CND is true (or otherwise truthy),
+   otherwise error with the message ERROR, unless the flag
+   `strip-requirements` is given"
+  (let* [(ppcnd nil)]
+    (set! ppcnd
+      (lambda (x)
+        (cond
+          [(get-idx x :n)
+           (let* [(tmp '())]
+             (set-idx! tmp :n (get-idx x :n))
+             (for i 1 (get-idx x :n) 1
+                  (set-idx! tmp i (ppcnd (get-idx x i))))
+             (.. "(" (concat tmp " ") ")"))]
+          [(= (get-idx x :tag) "string")
+           (string/format "%q" (get-idx x :value))]
+          [(get-idx x :contents) (get-idx x :contents)]
+          [else (string/format "%q" x)])))
+    (if (flag? "strip-requirements")
+      `true
+      `(unless ,cnd
+         (error (.. ,(.. "requirement " (ppcnd cnd) ": ") ,msg) 2))))) 
