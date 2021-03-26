@@ -87,7 +87,7 @@
   (let* [(documented '())
          (undocumented '())]
     (iter-pairs vars (lambda (name var)
-                       (push-cdr!
+                       (push!
                          (if (scope/var-doc var) documented undocumented)
                          (list name var))))
 
@@ -156,20 +156,20 @@
                   (set! lookup '())
                   (.<! letters letter lookup))
 
-                (push-cdr! lookup info))))
+                (push! lookup info))))
 
           ;; Determine whether this scope defines it or exports it
           (if (= (scope/var-scope var) (library-scope lib))
             (.<! info :defined lib)
-            (push-cdr! (.> info :exported) (list name lib))))))
+            (push! (.> info :exported) (list name lib))))))
 
     (with (letter-list (struct->assoc letters))
       (sort! letter-list (lambda (a b) (< (car a) (car b))))
       (for-each letter letter-list
-        (sort! (cadr letter) (lambda (a b) (< (scope/var-name (.> a :var)) (scope/var-name (.> b :var))))))
+        (sort! (cadr letter) (lambda (a b) (< (scope/var-full-name (.> a :var)) (scope/var-full-name (.> b :var))))))
 
       (writer/line! out "---")
-      (writer/line! out (.. "title: Symbol index"))
+      (writer/line! out "title: Symbol index")
       (writer/line! out "---")
       (writer/line! out "# Symbol index")
       (writer/line! out "" true)

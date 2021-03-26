@@ -47,7 +47,7 @@
 ; @SquidDev is a lazy bum.
 ; @hydraz is a cheating bastard.
 ; The following is a macro-expanded and a bit polished version of
-; https://hydraz.club/txt/optional-arguments.lisp.html, which brings
+; https://hydraz.semi.works/txt/optional-arguments.lisp.html, which brings
 ; optional argument support to Urn as a macro. If it breaks, don't try
 ; to fix it; You're better off recompiling optional-arguments.lisp and
 ; polishing the code up again.
@@ -207,8 +207,13 @@
           [(if (= (type# name) "table")
              (= (get-idx name :tag) "symbol")
              false)
-           (set! display (get-idx name :contents))
-           (set! name (.. "-" (get-idx name :contents)))]
+           (cond
+             [(get-idx name :display-name)
+              (set! display (get-idx name :display-name))
+              (set! name (.. "-" (get-idx name :display-name)))]
+             [true
+              (set! display (get-idx name :contents))
+              (set! name (.. "-" (get-idx name :contents)))])]
           ;; Otherwise assume we're a string
           [name
            (set! display (.. "" name))
@@ -229,24 +234,26 @@
    ### Example:
    ```cl
    > (with (x '())
-   .   (for i 1 3 1 (push-cdr! x i))
+   .   (for i 1 3 1 (push! x i))
    .   x)
    out = (1 2 3)
    ```"
   (let* [(impl (gensym))
-         (ctr' (gensym))
-         (end' (gensym))
-         (step' (gensym))]
-    `(let* [(,end' ,end)
+         (ctr' (gensym ctr))
+         (start' (gensym "for-start"))
+         (end' (gensym "for-limit"))
+         (step' (gensym "for-step"))]
+    `(let* [(,start' ,start)
+            (,end' ,end)
             (,step' ,step)
             (,impl nil)]
        (set! ,impl (lambda (,ctr')
                      (cond
-                       [(if (< 0 ,step) (<= ,ctr' ,end') (>= ,ctr' ,end'))
+                       [(if (< 0 ,step') (<= ,ctr' ,end') (>= ,ctr' ,end'))
                         (let* ((,ctr ,ctr')) ,@body)
                         (,impl (+ ,ctr' ,step'))]
                        [else])))
-       (,impl ,start))))
+       (,impl ,start'))))
 
 (defmacro while (check &body)
   "Iterate BODY while the expression CHECK evaluates to `true`.
@@ -357,7 +364,7 @@
    > (let [(res '())
    .       (struct { :foo 123 })]
    .   (for-pairs (k v) struct
-   .     (push-cdr! res (list k v)))
+   .     (push! res (list k v)))
    .     res)
    out = ((\"foo\" 123))
    ```"
@@ -376,7 +383,7 @@
        ,tbl nil)))
 
 
-(define arg
+(define *arguments*
   "The arguments passed to the currently executing program"
   (cond
     [(= nil arg#) '()]
@@ -387,6 +394,11 @@
         [(get-idx arg# :n)]
         [true (set-idx! arg# :n (len# arg#))])
       arg#]))
+
+(define arg
+  "The arguments passed to the currently executing program"
+  :deprecated "Use [[*arguments*]] instead."
+  *arguments*)
 
 (defun const-val (val)
   "Get the actual value of VAL, an argument to a macro.

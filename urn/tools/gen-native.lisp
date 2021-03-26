@@ -19,14 +19,14 @@
     (exit! 1))
 
   (let* [(prefix (.> args :gen-native))
-         (lib (.> compiler :lib-cache (last (.> args :input))))
+         (lib (library-cache-at-path (.> compiler :libs) (last (.> args :input))))
          (max-name 0)
          (max-quot 0)
          (natives '())]
     (for-each node (library-nodes lib)
       (when (and (list? node) (symbol? (car node)) (= (.> (car node) :contents) "define-native"))
         (with (name (.> (nth node 2) :contents))
-          (push-cdr! natives name)
+          (push! natives name)
 
           (set! max-name (math/max max-name (n (string/quoted name))))
           (set! max-quot (math/max max-quot (n (string/quoted (dot-quote prefix name))))))))
@@ -35,7 +35,7 @@
 
     (let* [(handle (io/open (.. (library-path lib) ".meta.lua") "w"))
            (format (..
-                     "\t[%-"
+                     "  [%-"
                      (number->string (+ max-name 3))
                      "s { tag = \"var\", contents = %-"
                      (number->string (succ max-quot))

@@ -45,9 +45,9 @@
     ;; and struct
     (with (entry (car body))
       (when (string? entry)
-        (push-cdr! main entry)
-        (push-cdr! options `:help)
-        (push-cdr! options entry)
+        (push! main entry)
+        (push! options `:help)
+        (push! options entry)
         (inc! idx)))
 
     ;; Scan for all remaining entries
@@ -55,19 +55,20 @@
       (with (entry (nth body idx))
         (if (key? entry)
           (progn
-            (push-cdr! options entry)
-            (push-cdr! options (nth body (+ idx 1)))
+            (push! options entry)
+            (push! options (nth body (+ idx 1)))
             (set! idx (+ idx 2)))
           (set! running false))))
 
-    (push-cdr! main `{ :name ,(symbol->string name)
+    (push! main `{ :name ,(symbol->string name)
                        ,@options
                        ,:run (lambda (,pass-arg ,@args) ,@(slice body idx))})
 
     main))
 
 (define-native add-pass!
-  "Register a PASS created with [[defpass]].")
+  "Register a PASS created with [[defpass]]."
+  :bind-to "_compiler['add-pass!']")
 
 (defmacro changed! ()
   "Mark this pass as having a side effect."
@@ -83,4 +84,5 @@
       a value.
 
     - `:usages`: A list of most usages. This does not include usages
-      from nodes which are considered \"dead\".")
+      from nodes which are considered \"dead\"."
+  :bind-to "_compiler['var-usage']")

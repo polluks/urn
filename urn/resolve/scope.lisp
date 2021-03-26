@@ -3,6 +3,7 @@
 
 (import urn/error error)
 (import urn/range range)
+(import urn/resolve/native (native))
 
 (defstruct (scope child scope?)
   "Create a new scope with the given PARENT, specifying the KIND of
@@ -89,7 +90,16 @@
 
     (mutable deprecated
       "Determines if this variable is deprecated. Will either be a string
-       storing a warning message, or `true` if no message was provided."))
+       storing a warning message, or `true` if no message was provided.")
+
+    (mutable intrinsic
+      "Determines if this variable can be optimised to some intrinsic
+       operation. Whilst this should generally be done on natives, there
+       may be some special cases that normal variables can make use of
+       it.")
+
+    (mutable native (hide var-native#) (hide set-var-native#!)
+      "[[native]] for this variable."))
 
   (constructor new
     (lambda (name kind scope node)
@@ -102,10 +112,28 @@
            (.. (scope-unique-prefix scope) name)
            node
            (/= kind "arg")
-           false nil nil false))))
+           false nil nil false nil nil))))
 
 (defmethod (pretty var) (var)
   (.. "«var : " (var-name var) "»"))
+
+(defun var-native (var)
+  "The [[native]] for this VAR. This can only be called for native
+   definitions."
+  (demand (= (var-kind var) "native") "VAR must be a native definition.")
+  (with (v-native (var-native# var))
+    (unless v-native
+      (set! v-native (native))
+      (set-var-native! var v-native))
+    v-native))
+
+(defun set-var-native! (var native)
+  "Set the NATIVE metadata for this VAR."
+  (assert-type! native native)
+  (demand (= (var-kind var) "native") "VAR must be a native definition.")
+  (demand (= (var-native# var) nil) "VAR already has native metadata.")
+
+  (set-var-native#! var native))
 
 (defun get (scope name)
   "Get variable with the given NAME in the given SCOPE, not looking in

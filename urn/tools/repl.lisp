@@ -229,7 +229,7 @@
         (stack '(1))]
     (for-each tok toks
       (case (type tok)
-        ["open" (push-cdr! stack (+ (pos-column (range-start (.> tok :source))) 2))]
+        ["open" (push! stack (+ (pos-column (range-start (.> tok :source))) 2))]
         ["close" (pop-last! stack)]
         [_]))
     (string/rep " " (pred (last stack)))))
@@ -266,7 +266,7 @@
              (for-pairs (name _) (scope/scope-variables scope)
                (when (and (string/starts-with? name contents) (not (.> visited name)))
                  (.<! visited name true)
-                 (push-cdr! vars (string/sub name (succ (n contents))))))
+                 (push! vars (string/sub name (succ (n contents))))))
              (recur (scope/scope-parent scope)))
            (sort! vars)
            vars)
@@ -353,6 +353,7 @@
        (print! "REPL commands:
                 [:d]oc NAME        Get documentation about a symbol
                 :module NAME       Display a loaded module's docs and definitions.
+                [:r]eload          Reload all modules which have changed.
                 :scope             Print out all variables in the scope
                 [:s]earch QUERY    Search the current scope for symbols and documentation containing a string.
                 [:v]iew NAME       Display the definition of a symbol.
@@ -378,7 +379,7 @@
       [(= command "module")
        (with (name (nth args 2))
          (if name
-           (with (mod (.> compiler :lib-names name))
+           (with (mod (.> (library/library-cache-names (.> compiler :libs)) name))
              (cond
                [(= mod nil)
                 (logger/put-error! logger (.. "Cannot find '" name "'"))]
@@ -387,14 +388,28 @@
                 (print! (.. "Located at " (library/library-path mod)))
 
                 (when-with (docs (library/library-docs mod))
-                  (print-docs! docs)
-                  (print!))
+                  (print!)
+                  (print-docs! docs))
 
-                (print! (coloured "32;1" "Exported symbols"))
-                (with (vars '())
-                  (for-pairs (name) (scope/scope-exported (library/library-scope mod)) (push-cdr! vars name))
-                  (sort! vars)
-                  (print! (concat vars "  ")))]))
+                (with (vars (-> mod
+                                library/library-scope
+                                scope/scope-exported
+                                keys
+                                sort!))
+                  (unless (empty? vars)
+                    (print!)
+                    (print! (coloured "32;1" "Exported symbols"))
+                    (print! (concat vars "  "))))
+
+                (with (imports (-> mod
+                                   library/library-depends
+                                   keys
+                                   (map library/library-name <>)
+                                   sort!))
+                  (unless (empty? imports)
+                    (print!)
+                    (print! (coloured "32;1" "Imports"))
+                    (print! (concat imports " "))))]))
            (logger/put-error! logger ":module <variable>")))]
 
       [(or (= command "search") (= command "s"))
@@ -408,7 +423,7 @@
            (while current
              (for-pairs (name var) (scope/scope-variables current)
                (unless (.> vars-set name)
-                 (push-cdr! vars name)
+                 (push! vars name)
                  (.<! vars-set name true)))
              (set! current (scope/scope-parent current)))
 
@@ -416,7 +431,7 @@
              ;; search by function name
              (for-each keyword keywords
                (when (string/find var keyword)
-                 (push-cdr! name-results var)))
+                 (push! name-results var)))
              ;; search by function docs
              (when-let* [(doc-var (scope/lookup scope var))
                          (temp-docs (scope/var-doc doc-var))
@@ -426,7 +441,7 @@
                  (when (string/find docs keyword)
                    (inc! keywords-found)))
                (when (eq? keywords-found (n keywords))
-                 (push-cdr! docs-results var))))
+                 (push! docs-results var))))
            (if (and (empty? name-results) (empty? docs-results))
              (logger/put-error! logger "No results")
              (progn
@@ -449,7 +464,7 @@
          (while current
            (for-pairs (name var) (scope/scope-variables current)
              (unless (.> vars-set name)
-               (push-cdr! vars name)
+               (push! vars name)
                (.<! vars-set name true)))
            (set! current (scope/scope-parent current)))
 
@@ -471,7 +486,7 @@
                           (buffer '())]
 
                      (for i (pos-line start) (pos-line finish) 1
-                       (push-cdr! buffer (string/sub (.> lines i)
+                       (push! buffer (string/sub (.> lines i)
                                                      (if (= i (pos-line start))  (pos-column start)   1)
                                                      (if (= i (pos-line finish)) (pos-column finish) -1))))
 
@@ -494,6 +509,9 @@
                    (logger/put-error! logger (.. "Cannot extract source code for " (string/quoted name)))))
                (logger/put-error! logger (.. "Cannot find " (string/quoted name)))))
            (logger/put-error! logger ":view <variable>")))]
+
+      [(or (= command "reload") (= command "r"))
+       (loader/reload compiler)]
 
       [(or (= command "quit") (= command "q"))
        (print! "Goodbye.")

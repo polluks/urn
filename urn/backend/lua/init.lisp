@@ -8,21 +8,20 @@
 (import urn/timer timer)
 (import urn/traceback traceback)
 
-(import test/assert (assert!))
 (import lua/basic (load))
 
-(defun create-state (meta) {
-                             ;; [[run-pass]] options
-                             :timer      (timer/void)
+(defun create-state ()
+  {
+  ;; [[run-pass]] options
+  :timer      (timer/void)
 
-                             ;; execute-states options
-                             :count      0
-                             :mappings   {}
+  ;; execute-states options
+  :count      0
+  :mappings   {}
 
-                             ;; Various lookup tables
-                             :var-cache  {}
-                             :var-lookup {}
-                             :meta       (or meta {}) })
+  ;; Various lookup tables
+  :var-cache  {}
+  :var-lookup {} })
 
 (defun file (compiler shebang)
   "Generate a complete file using the current COMPILER state.
@@ -31,7 +30,7 @@
    and the resulting contents.
 
    If SHEBANG is specified then it will be prepended."
-  (let* [(state (create-state (.> compiler :lib-meta)))
+  (let* [(state (create-state))
          (out (w/create))]
     (when shebang
       (w/line! out (.. "#!/usr/bin/env " shebang)))
@@ -43,16 +42,15 @@
     (w/line! out "local _libs = {}")
 
     ;; Emit all native libraries
-    (for-each lib (.> compiler :libs)
+    (for-each lib (library-cache-loaded (.> compiler :libs))
       (let* [(prefix (string/quoted (.. (library-unique-name lib) "/")))
              (native (library-lua-contents lib))]
         (when native
-          (w/line! out "local _temp = (function()")
+          (w/begin-block! out "local _temp = (function()")
           (for-each line (string/split native "\n")
             (when (/= line "")
-              (w/append! out "\t")
               (w/line! out line)))
-          (w/line! out "end)()")
+          (w/end-block! out "end)()")
           (w/line! out (.. "for k, v in pairs(_temp) do _libs[" prefix ".. k] = v end")))))
 
     ;; Count the number of active variables
@@ -91,7 +89,7 @@
            (for-each node (.> compiler :out)
              (when-with (var (.> node :def-var))
                (.<! counts var 0)
-               (push-cdr! vars var)))
+               (push! vars var)))
            (visitor/visit-block (.> compiler :out) 1
              (lambda (x)
                (when (symbol? x)
@@ -119,19 +117,25 @@
   (let* [(state-list '())
          (name-list '())
          (export-list '())
-         (escape-list '())]
+         (escape-list '())
+         (local-list '())]
 
     (for i (n states) 1 -1
       (with (state (nth states i))
         (unless (= (state/rs-stage state) "executed")
-          (assert! (state/rs-node state) (.. "State is in " (state/rs-stage state) " instead"))
+          (demand (state/rs-node state) (.. "State is in " (state/rs-stage state) " instead"))
           (let* [(var (or (state/rs-var state) (scope/temp-var "temp" (state/rs-node state))))
                  (escaped (push-escape-var! var back-state true))
                  (name (scope/var-name var))]
-            (push-cdr! state-list state)
-            (push-cdr! export-list (.. escaped " = " escaped))
-            (push-cdr! name-list name)
-            (push-cdr! escape-list escaped)))))
+            (push! state-list state)
+            (push! export-list (.. escaped " = " escaped))
+            (push! name-list name)
+            (push! escape-list escaped)
+
+            ;; Only emit locals for variables which will not change. Otherwise
+            ;; we'll end up ignoring later changes to the variable
+            (when (or (not var) (scope/var-const? var))
+              (push! local-list escaped))))))
 
     (unless (empty? state-list)
       (let* [(out (w/create))
@@ -146,7 +150,7 @@
         (set! name (.. "compile#" id "{" name "}"))
 
         (prelude out)
-        (w/line! out (.. "local " (concat escape-list ", ")))
+        (unless (empty? local-list) (w/line! out (.. "local " (concat local-list ", "))))
 
         ;; Emit all expressions
         (for i 1 (n state-list) 1
@@ -158,7 +162,7 @@
               ;; temp variable. Otherwise it will be emitted in the main backend
               (if (state/rs-var state)
                 ""
-                (..(nth escape-list i) "= ")))
+                (..(nth escape-list i) " = ")))
             (w/line! out)))
 
         (w/line! out (.. "return { " (concat export-list ", ") "}"))
@@ -173,7 +177,7 @@
                     (lines (string/split str "\n"))
                     (fmt (.. "%" (n (number->string (n lines))) "d | %s"))]
                (for i 1 (n lines) 1
-                 (push-cdr! buffer (sprintf fmt i (nth lines i))))
+                 (push! buffer (sprintf fmt i (nth lines i))))
                (fail! (.. msg ":\n" (concat buffer "\n"))))]
             [(?fun)
              (case (list (xpcall fun traceback/traceback))
@@ -188,17 +192,19 @@
                     (when (.> state :var)
                       (.<! global escaped res))))])]))))))
 
-(defun get-native (meta)
-  "Convert a native META definition into a function."
-  (unless (.> meta :has-value)
-    (with (out (w/create))
-      (prelude out)
-      (w/append! out "return ")
-      (compile-native out meta)
+(defun get-native (var)
+  "Convert a native VAR into a function."
+  (with (native (scope/var-native var))
+    (unless (.> native :has-value)
+      (with (out (w/create))
+        (prelude out)
+        (w/append! out "return ")
+        (compile-native out var native)
 
-      (.<! meta :has-value true)
-      (when-let* [(fun (load (w/->string out) (.. "=" (.> meta :name))))
-                  ((ok res) (pcall fun))]
-        (.<! meta :value res))))
+        (.<! native :has-value true)
+        (when-let* [(fun (load (w/->string out) (.. "=" (scope/var-name var))))
+                    ((ok res) (pcall fun))]
+          (.<! native :value res))))
 
-  (.> meta :value))
+    ;; TODO: Add setter to native or do something else
+    (.> native :value)))

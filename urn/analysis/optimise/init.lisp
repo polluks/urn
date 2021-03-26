@@ -44,8 +44,7 @@
 
 (defun default ()
   "Create a collection of default optimisations."
-  { :normal (list
-                  opt/fusion)
+  { :normal (list)
     :usage (list opt/strip-defs
                  opt/cond-eliminate
                  opt/inline)
@@ -53,10 +52,12 @@
                      opt/strip-pure
                      opt/constant-fold
                      opt/cond-fold
+                     opt/wrap-value-flatten
                      opt/progn-fold-expr
                      opt/progn-fold-block
                      opt/variable-fold
                      opt/strip-args
                      opt/lambda-fold
                      opt/lower-value
-                     opt/expression-fold) })
+                     opt/expression-fold
+                     opt/fusion) })

@@ -26,8 +26,8 @@
            (v1 '())]
        ;; Setup v0 where v0[i] is the edit distance for an empty a.
        (for i 1 (succ (n b)) 1
-         (push-cdr! v0 (pred i))
-         (push-cdr! v1 0))
+         (push! v0 (pred i))
+         (push! v1 0))
 
        (for i 1 (n a) 1
          ;; Calculate crrent row distance from previous v0
@@ -67,7 +67,7 @@
 
        (nth v1 (succ (n b))))]))
 
-(defun compile (compiler nodes scope name)
+(defun compile (compiler nodes scope name loader)
   "Attempt to resolve all variables in a list of expressions, expanding
    all macros and what not.
 
@@ -108,7 +108,7 @@
    requirement on definition order."
   (let [(queue '())
         (states '())
-        (loader (.> compiler :loader))
+        (loader (or loader (.> compiler :loader)))
         (logger (.> compiler :log))
         (timer (.> compiler :timer))]
 
@@ -121,10 +121,10 @@
               (state (state/create scope compiler))
               (co (co/create resolve/resolve))]
 
-          (push-cdr! states state)
+          (push! states state)
           (when hook (debug/sethook co hook hook-mask hook-count))
 
-          (push-cdr! queue { :tag "init"
+          (push! queue { :tag "init"
                              :node node
 
                              ;; General state for every action
@@ -168,7 +168,7 @@
                                     ;; And add them to the task list
                                     (with (co (co/create resolve/resolve))
                                       (when hook (debug/sethook co hook hook-mask hook-count))
-                                      (push-cdr! queue { :tag  "init"
+                                      (push! queue { :tag  "init"
                                                          :node (nth result i)
 
                                                          :_co    co
@@ -190,7 +190,7 @@
                             (.<! result :_active-node (.> compiler :active-node))
 
                             ;; Requeue the node
-                            (push-cdr! queue result)]))
+                            (push! queue result)]))
 
                        ;; Clear the active scope/node so it is fresh for other expressions.
                        (.<! compiler :active-scope nil)
@@ -215,13 +215,13 @@
               ["define"
                ;; We're waiting for a variable to be defined.
                ;; If it exists, then resume the resolver. Otherwise we'll requeue.
-               (if (.> scope :variables (.> head :name))
-                 (resume head (.> scope :variables (.> head :name)))
+               (if-with (var (scope/get scope (.> head :name)))
+                 (resume head var)
                  (progn
                    (logger/put-debug! logger (.. "  Awaiting definiion of " (.> head :name)))
 
                    (inc! skipped)
-                   (push-cdr! queue head)))]
+                   (push! queue head)))]
               ["build"
                ;; We're waiting another node to finish being resolved.
                ;; If it has then we resume, otherwise we requeue.
@@ -232,7 +232,7 @@
                                                (if (state/rs-var (.> head :state)) (scope/var-name (state/rs-var (.> head :state))) "?")))
 
                    (inc! skipped)
-                   (push-cdr! queue head)))]
+                   (push! queue head)))]
               ["execute"
                (backend/execute-states (.> compiler :compile-state) (.> head :states) (.> compiler :global))
                (resume head)]
@@ -293,10 +293,10 @@
                      (distances {})]
 
                  (while scope
-                   (for-pairs (name _) (.> scope :variables)
+                   (for-pairs (name _) (scope/scope-variables scope)
                      (unless (.> var-set name)
                        (.<! var-set name :true)
-                       (push-cdr! vars name)
+                       (push! vars name)
 
                        (let* [(parlen (n (.> entry :name)))
                               (lendiff (math/abs (- (n name) parlen)))]
@@ -307,7 +307,7 @@
                            (with (dis (/ (distance name (.> entry :name)) parlen))
                              (when (<= parlen 5) (set! dis (/ dis 2)))
 
-                             (push-cdr! var-dis name)
+                             (push! var-dis name)
                              (.<! distances name dis))))))
 
                    (set! scope (scope/scope-parent scope)))

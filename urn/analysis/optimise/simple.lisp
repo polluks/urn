@@ -6,6 +6,7 @@
 (import urn/backend/lua lua)
 (import urn/logger logger)
 (import urn/range (get-source get-top-source))
+(import urn/resolve/native native)
 (import urn/resolve/scope scope)
 
 (defpass strip-import (state nodes start)
@@ -47,9 +48,9 @@
     (let* [(head (car node))
            (meta (and (symbol? head)
                       (not (.> head :folded))
-                      (= (scope/var-kind (.> head :var)) "native") (.> state :meta (scope/var-unique-name (.> head :var)))))]
+                      (= (scope/var-kind (.> head :var)) "native") (scope/var-native (.> head :var))))]
       ;; Determine whether we have a native (and pure) function. If so, we'll invoke it.
-      (if (and meta (.> meta :pure) (function? (lua/get-native meta)))
+      (if (and meta (native/native-pure? meta) (function? (lua/get-native (.> head :var))))
         (with (res (list (pcall (.> meta :value) (splice (map urn->val (cdr node))))))
           (if (car res)
             (with (val (nth res 2))
@@ -118,7 +119,7 @@
          (let* [(branch (pop-last! node))
                 (child-cond (nth branch 2))]
            (for i 2 (n child-cond) 1
-             (push-cdr! node (nth child-cond i))))
+             (push! node (nth child-cond i))))
          (changed!)
          node]
         [else node]))
@@ -128,7 +129,8 @@
   "Simplify all directly called lambdas without arguments, inlining them
    were appropriate."
   :cat '("opt" "deforest" "transform-post-bind")
-  ;; Look for directly called lambdas
+  ;; Look for directly called lambdas and attempt to move direct set!s into
+  ;; a binding. This effectively reduces letrec into let.
   (when (simple-binding? node)
     (let* [(vars {})
            (node-lam (car node))
@@ -164,7 +166,7 @@
 
                 ;; Push all the `nil`s we need
                 (while (< val-n i)
-                  (push-cdr! node (make-nil))
+                  (push! node (make-nil))
                   (inc! val-n))
 
                 ;; Remove the setter and shift it to the function call
@@ -175,8 +177,8 @@
             (inc! i)
             (recur))))))
 
-
-  ;; Look for directly called lambdas
+  ;; Look for directly called lambdas and attempt to merge them together.
+  ;; Namely reducing let* into let
   (when (simple-binding? node)
     (let* [(vars {})
            (node-lam (car node))
@@ -201,7 +203,7 @@
                  (for i 1 (n args) 1
                    (changed!)
                    (with (arg (remove-nth! args 1))
-                     (push-cdr! node-args arg)
+                     (push! node-args arg)
                      (.<! vars (.> arg :var) true)))]
 
                 ;; If the value contains any of the variables then we'll exit the loop
@@ -209,9 +211,9 @@
 
                 [true
                  (changed!)
-                 (push-cdr! node (remove-nth! child 2))
+                 (push! node (remove-nth! child 2))
                  (with (arg (remove-nth! args 1))
-                   (push-cdr! node-args arg)
+                   (push! node-args arg)
                    (.<! vars (.> arg :var) true))
 
                  (recur)])))
@@ -228,6 +230,34 @@
 
             ;; And continue the loop. Otherwise there was something that couldn't be merged.
             (recur (nth node-lam 3))))))))
+
+(defpass wrap-value-flatten (state node)
+  "Flatten \"value wrappers\": lambdas with a single argument which
+   prevent returning multiple values."
+  :cat '("opt" "transform-post")
+  (when (and (list? node)
+             (with (head (car node))
+               (or (not (symbol? head)) (/= (scope/var-kind (.> head :var)) "builtin"))))
+
+    ;; We can always handle the first argument as it's either a symbol (and so a nop)
+    ;; or some directly called lambda (which we may be able to work with).
+    (for i 1 (math/max 1 (pred (n node))) 1
+      (with (arg (nth node i))
+        ;; If this argument is some sort of call
+        (when (and (list? arg) (= (n arg) 2)
+                   (with (head (car arg))
+                     (and
+                       ;; And we're calling a lambda
+                       (list? head) (= (n head) 3)
+                       ;; Which has one non-variadic argument
+                       (builtin? (car head) :lambda) (= (n (nth head 2)) 1)
+                       (not (scope/var-variadic? (.> (car (nth head 2)) :var)))
+                       ;; And that argument is just directly returned
+                       (symbol? (nth head 3)) (= (.> (nth head 3) :var) (.> (car (nth head 2)) :var)))))
+          (changed!)
+          (.<! node i (cadr arg))))))
+
+  node)
 
 (defpass progn-fold-expr (state node)
   "Reduce [[progn]]-like nodes with a single body element into a single

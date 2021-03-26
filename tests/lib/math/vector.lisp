@@ -1,5 +1,6 @@
 (import test ())
 (import math/vector ())
+(import math/numerics ())
 
 (defmacro ok? (&exprs)
   "Returns whether the list of EXPRS evaluated without erroring."
@@ -59,6 +60,14 @@
             (= false (ok? (n/ (/ 0 0) (vector 1))))
             (= false (ok? (n/ (vector 1) 0)))
             (= false (ok? (n/ 0 (vector 0))))))
+
+  (can "be negated"
+    (affirm (eq? (vector -3 -2 1) (nnegate (vector 3 2 -1)))
+            (eq? (vector -5/3) (nnegate (vector 5/3)))))
+
+  (can "have the absolute value taken"
+    (affirm (eq? (vector 3 2 1 0) (nabs (vector -3 2 -1 0)))
+            (eq? (vector 5/3 2/3) (nabs (vector -5/3 2/3)))))
 
   (can "compute the dot product"
     (affirm (eq? 0 (dot (vector 1 0) (vector 0 1)))

@@ -1,6 +1,6 @@
 (import urn/tools/docs       docs)
-(import urn/tools/gen-native gen-native)
 (import urn/tools/repl       repl)
+(import urn/tools/gen-native gen-native)
 (import urn/tools/run        run)
 (import urn/tools/simple     simple)
 
@@ -18,6 +18,7 @@
 (import urn/resolve/scope scope)
 (import urn/resolve/state state)
 (import urn/timer timer)
+(import urn/traceback traceback)
 
 (import io/argparse arg)
 (import lua/basic (_G))
@@ -48,7 +49,7 @@
                       (normalise-path dir true)
                       ;; If we haven't got an URN_ROOT variable then try to work it out from the current file
                       (with (path (or
-                                    (.> arg 0) ;; Use the file given on the command line
+                                    (.> *arguments* 0) ;; Use the file given on the command line
                                     (and debug/getinfo (string/gsub (.> (debug/getinfo 1 "S") :short_src) "^@", ""))
                                     "urn"))
                         ;; Strip the possible file names
@@ -124,7 +125,7 @@
     :default '()
     :action  arg/add-action)
 
-  (arg/add-argument! spec '("--prelude" "-p")
+  (arg/add-argument! spec '("--prelude" "-P")
     :help    "A custom prelude path to use."
     :cat     "path"
     :narg    1
@@ -146,7 +147,7 @@
     :help    "A wrapper script to launch Urn with"
     :narg    1
     :action  (lambda (a b value)
-               (let* [(args (map id arg))
+               (let* [(args (map id *arguments*))
                       (i 1)
                       (len (n args))]
                  (while (<= i len)
@@ -166,8 +167,8 @@
                        [true])))
 
                  (with (command (list value))
-                   (when-with (interp (.> arg -1)) (push-cdr! command interp))
-                   (push-cdr! command (.> arg 0))
+                   (when-with (interp (.> *arguments* -1)) (push! command interp))
+                   (push! command (.> *arguments* 0))
 
                    (case (list (os/execute (concat (append command args) " ")))
                      [((number? @ ?code) . _) (os/exit code)] ; luajit.
@@ -205,11 +206,11 @@
     ;; Process include paths
     (for-each path (.> args :include)
       (cond
-        [(string/find path "%?") (push-cdr! paths (normalise-path path false))]
+        [(string/find path "%?") (push! paths (normalise-path path false))]
         [else
          (set! path (normalise-path path true))
-         (push-cdr! paths (.. path "?"))
-         (push-cdr! paths (.. path "?/init"))]))
+         (push! paths (.. path "?"))
+         (push! paths (.. path "?/init"))]))
 
     ;; Include LuaRocks modules
     (when (.> args :include-rocks)
@@ -218,7 +219,7 @@
     (logger/put-verbose! logger (.. "Using path: " (pretty paths)))
 
     (when (and (= (.> args :prelude) (.. directory lib-name "/prelude")) (empty? (.> args :plugin)))
-      (push-cdr! (.> args :plugin) (.. directory "plugins/fold-defgeneric.lisp")))
+      (push! (.> args :plugin) (.. directory "plugins/fold-defgeneric.lisp")))
 
     (cond
       [(empty? (.> args :input))
@@ -232,36 +233,39 @@
                       :paths     paths
                       :flags     (.> args :flag)
 
-                      :lib-env   {}
-                      :lib-meta  {}
-                      :libs      '()
-                      :lib-cache {}
-                      :lib-names {}
+                      :libs       (library/library-cache)
+                      :prelude    nil
+                      :root-scope builtins/root-scope
 
                       :warning   (warning/default)
                       :optimise  (optimise/default)
 
-                      :root-scope builtins/root-scope
+                      :exec      (lambda (func) (list (xpcall func traceback/traceback)))
 
                       :variables {}
                       :states    {}
                       :out       '() })
 
       ;; Add compileState
-      (.<! compiler :compile-state (lua/create-state (.> compiler :lib-meta)))
+      (.<! compiler :compile-state (lua/create-state))
 
       ;; Set the loader
       (.<! compiler :loader (cut loader/named-loader compiler <>))
 
       ;; Add globals
       (.<! compiler :global (setmetatable
-                              {  :_libs (.> compiler :lib-env)
+                              {  :_libs (library/library-cache-values (.> compiler :libs))
                                 :_compiler (plugins/create-plugin-state compiler)}
                               { :__index _G }))
 
       ;; Store all builtin vars in the lookup
-      (for-pairs (_ var) (.> compiler :root-scope :variables)
+      (for-pairs (_ var) (scope/scope-variables builtins/root-scope)
         (.<! compiler :variables (tostring var) var))
+
+      ;; Run the various setup functions
+      (for-each task tasks
+        (when ((.> task :pred) args)
+          (when-with (setup (.> task :init)) (setup compiler args))))
 
       (timer/start-timer! (.> compiler :timer) "loading")
       (with (do-load! (lambda (name)
@@ -278,9 +282,7 @@
 
         ;; Load the prelude and setup the environment
         (with (lib (do-load! (.> args :prelude)))
-          (.<! compiler :root-scope (scope/child (.> compiler :root-scope)))
-          (for-pairs (name var) (scope/scope-exported (library/library-scope lib))
-            (scope/import! (.> compiler :root-scope) name var)))
+          (loader/setup-prelude! compiler lib))
 
         ;; And load remaining files
         (for-each input (append (.> args :plugin) (.> args :input))

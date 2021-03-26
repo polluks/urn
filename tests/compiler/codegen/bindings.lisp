@@ -2,6 +2,21 @@
 (import tests/compiler/codegen/codegen-helpers ())
 
 (describe "The codegen"
+  (section "will generate value wrappers"
+    (it "for normal arguments"
+      (affirm-codegen
+        '(((lambda (x) x) (foo)))
+        "return (foo())"))
+    (it "for variadic arguments with a known value set"
+      (affirm-codegen
+        '(((lambda (&x) x) (foo) 2))
+        "return {tag=\"list\", n=2, foo(), 2}"))
+    (it "unless there are an unknown number of values"
+      (affirm-codegen
+        '(((lambda (&x) x) (foo)))
+        "local x = _pack(foo()) x.tag = \"list\"
+         return x")))
+
   (section "will which handle lambdas with variadic arguments"
     (it "on their own"
       (with (fn (lambda (&fst) fst))

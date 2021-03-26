@@ -1,6 +1,6 @@
 LUA        ?= lua
-LUA_FLAGS  ?=-O2
-TEST_FLAGS ?=-fstrict-structs
+LUA_FLAGS  ?=-O2 --plugin plugins/fold-defgeneric.lisp --plugin plugins/fold-bool.lisp
+TEST_FLAGS ?=-fstrict
 TEST_ARGS  ?=
 OUT_DIR    ?= bin
 DOCS_DIR   ?= docs_tmp
@@ -66,7 +66,7 @@ publish_docs: docs
 	git checkout master
 
 # Miscellaneous
-rock: # docs
+rock: all docs
 	rm -rf ${ROCKS_DIR}
 	@mkdir ${ROCKS_DIR}
 

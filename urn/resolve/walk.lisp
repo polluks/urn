@@ -9,9 +9,11 @@
 (import lua/coroutine co)
 
 (import urn/error error)
+(import urn/library ())
 (import urn/logger/format format)
 (import urn/range range)
 (import urn/resolve/builtins (builtin))
+(import urn/resolve/native native)
 (import urn/resolve/scope scope)
 (import urn/resolve/state state)
 (import urn/traceback traceback)
@@ -61,20 +63,200 @@
           ["key"
            (case (.> child :value)
              ["hidden" (.<! (scope/scope-exported (scope/var-scope var)) (scope/var-name var) nil)]
+
              ["deprecated"
+              (when (scope/var-deprecated var)
+                (error-positions! log child "This definition is already deprecated"))
+
               (with (message true)
                 (when (and (< i finish) (string? (nth node (succ i))))
                   (set! message (.> (nth node (succ i)) :value))
                   (inc! i))
                 (scope/set-var-deprecated! var message))]
-             ["mutable"
-              (unless (scope/var-const? var)
-                (error-positions! log child (.. "This definition has is already mutable")))
-              (scope/set-var-const! var false)]
-             [_ (error-positions! log child (.. "Unexpected modifier '" (pretty child) "'"))])]
-          [?ty (error-positions! log child (.. "Unexpected node of type " ty ", have you got too many values"))]))
 
-      (inc! i))))
+             ["mutable"
+              (when (/= (scope/var-kind var) "defined")
+                (error-positions! log child "Can only set conventional definitions as mutable"))
+              (unless (scope/var-const? var)
+                (error-positions! log child "This definition is already mutable"))
+
+              (scope/set-var-const! var false)]
+
+             ["intrinsic"
+              (expect-type! log (nth node (succ i)) node "symbol" "intrinsic")
+              (when (scope/var-intrinsic var)
+                (error-positions! log child "Multiple intrinsics set"))
+
+              (scope/set-var-intrinsic! var (.> (nth node (succ i)) :contents))
+              (inc! i)]
+
+             ["pure"
+              (when (/= (scope/var-kind var) "native")
+                (error-positions! log child "Can only set native definitions as pure"))
+
+              (with (native (scope/var-native var))
+                (when (native/native-pure? native)
+                  (error-positions! log child "This definition is already pure"))
+
+                (native/set-native-pure! native true))]
+
+             ["signature"
+              (when (/= (scope/var-kind var) "native")
+                (error-positions! log child "Can only set signature for native definitions"))
+
+              (let [(native (scope/var-native var))
+                    (signature (nth node (succ i)))]
+                (expect-type! log signature node "list" "signature")
+                (for-each child signature (expect-type! log child signature "symbol" "argument"))
+                (when (native/native-signature native)
+                  (error-positions! log child "multiple signatures set"))
+                (native/set-native-signature! native signature)
+
+                (inc! i))]
+
+             ["bind-to"
+              (when (/= (scope/var-kind var) "native")
+                (error-positions! log child "Can only bind native definitions"))
+
+              (with (native (scope/var-native var))
+                (expect-type! log (nth node (succ i)) node "string" "bind expression")
+                (when (native/native-bind-to native)
+                  (error-positions! log child "Multiple bind expressions set"))
+
+                (native/set-native-bind-to! native (.> (nth node (succ i)) :value))
+                (inc! i))]
+
+             ["syntax"
+              (when (/= (scope/var-kind var) "native")
+                (error-positions! log child "Can only set syntax for native definitions"))
+
+              (let* [(native (scope/var-native var))
+                     (syntax (nth node (succ i)))]
+                (expect! log syntax node "syntax")
+                (when (native/native-syntax native)
+                  (error-positions! log child "Multiple syntaxes set"))
+
+                (case (type syntax)
+                  ["string"
+                   (with ((syn arity) (native/parse-template (.> syntax :value)))
+                     (native/set-native-syntax! native syn)
+                     (native/set-native-syntax-arity! native arity))]
+
+                  ["list"
+                   ;; Ensure the syntax isn't empty
+                   (expect! log (car syntax) syntax "syntax element")
+
+                   (let [(syn '())
+                         (arity 0)]
+                     ;; Gobble list elements, verifying they are valid
+                     (for-each child syntax
+                       (case (type child)
+                         ["string" (push! syn (.> child :value))]
+                         ["number"
+                          (with (val (.> child :value))
+                            (when (> val arity) (set! arity val))
+                            (push! syn val))]
+                         [?ty
+                          (error-positions! log child (format nil "Expected syntax element, got {}" (if (= ty "nil") "nothing" ty)))]))
+
+                     (native/set-native-syntax! native syn)
+                     (native/set-native-syntax-arity! native arity))]
+
+                  [?ty
+                   (error-positions! log child (format nil "Expected syntax, got {}" (if (= ty "nil") "nothing" ty)))])
+
+                (inc! i))]
+
+             ["stmt"
+              (when (/= (scope/var-kind var) "native")
+                (error-positions! log child "Can only set native definitions as statements"))
+
+              (with (native (scope/var-native var))
+                (when (native/native-syntax-stmt? native)
+                  (error-positions! log child "This definition is already a statement"))
+
+                (native/set-native-syntax-stmt! native true))]
+
+             ["syntax-precedence"
+              (when (/= (scope/var-kind var) "native")
+                (error-positions! log child "Can only set syntax of native definitions"))
+
+              (let [(native (scope/var-native var))
+                    (precedence (nth node (succ i)))]
+                (when (native/native-syntax-precedence native)
+                  (error-positions! log child "Multiple precedences set"))
+
+                (case (type precedence)
+                  ["number" (native/set-native-syntax-precedence! native (.> precedence :value))]
+
+                  ["list"
+                   (with (res '())
+                     (for-each prec precedence
+                       (expect-type! log prec precedence "number" "precedence")
+                       (push! res (.> prec :value)))
+
+                     (native/set-native-syntax-precedence! native res))]
+
+                  [?ty
+                   (error-positions! log child (format nil "Expected precedence, got {}" (if (= ty "nil") "nothing" ty)))])
+
+                (inc! i))]
+
+             ["syntax-fold"
+              (when (/= (scope/var-kind var) "native")
+                (error-positions! log child "Can only set syntax of native definitions"))
+
+              (with (native (scope/var-native var))
+                (expect-type! log (nth node (succ i)) node "string" "fold direction")
+                (when (native/native-syntax-fold native)
+                  (error-positions! log child "Multiple fold directions set"))
+
+                (case (.> (nth node (succ i)) :value)
+                  ["left"  (native/set-native-syntax-fold! native "left")]
+                  ["right" (native/set-native-syntax-fold! native "right")]
+                  [?str    (error-positions! log (nth node (succ i)) (format nil "Unknown fold direction {#str:string/quoted}"))])
+                (inc! i))]
+
+             [_ (error-positions! log child (.. "Unexpected modifier '" (pretty child) "'"))])]
+          [?ty (error-positions! log child (.. "Unexpected modifier of type " ty ", have you got too many values?"))]))
+
+      (inc! i)))
+
+  (when (= (scope/var-kind var) "native")
+    (with (native (scope/var-native var))
+      (when (and (native/native-syntax native) (native/native-bind-to native))
+        (error-positions! log node "Cannot specify :syntax and :bind-to in native definition"))
+
+      ;; Verify syntax specific fields are not set
+      (when (and (native/native-syntax-fold native) (not (native/native-syntax native)))
+        (error-positions! log node "Cannot specify a fold direction when no syntax given"))
+      (when (and (native/native-syntax-stmt? native) (not (native/native-syntax native)))
+        (error-positions! log node "Cannot have a statement when no syntax given"))
+      (when (and (native/native-syntax-precedence native) (not (native/native-syntax native)))
+        (error-positions! log node "Cannot specify a precedence when no syntax given"))
+
+      (when-with (syntax (native/native-syntax native))
+        (let* [(syntax-arity (native/native-syntax-arity native))
+
+               (signature (native/native-signature native))
+               (signature-arity (if (list? signature) (n signature) nil))
+
+               (precedence (native/native-syntax-precedence native))
+               (prec-arity (if (list? precedence) (n precedence) nil))]
+
+          ;; Verify signature arity is consistent
+          (when (and signature-arity (/= signature-arity syntax-arity))
+            (error-positions! log node (format nil "Definition has arity {#syntax-arity}, but signature has {#signature-arity} arguments")))
+
+          ;; Verify precedence arity is consistent
+          (when (and prec-arity (/= prec-arity syntax-arity))
+            (error-positions! log node (format nil "Definition has arity {#syntax-arity}, but precedence has {#prec-arity} values")))
+
+          ;; Verify folds take 2 arguments
+          (when (and (native/native-syntax-fold native) (/= syntax-arity 2))
+            (error-positions! log node (format nil "Cannot specify a fold direction with arity {#syntax-arity} (must be 2)")))))))
+
+  nil)
 
 (defun resolve-execute-result (source node scope state)
   "Resolve the result of a macro or unquote, binding the range and
@@ -218,12 +400,13 @@
                             [(= (n name) 1)
                              ;; We've just got a "&". This doesn't make sense so we'll error.
                              (error-positions! (state/rs-logger state) arg
-                               (if (< i (n args))
-                                 (with (next-arg (nth args (succ i)))
-                                   (if (and (symbol? args) (/= (string/char-at (.> next-arg :contents) 1) "&"))
-                                     (.. "\nDid you mean '&" (.> next-arg :contents) "'?")
-                                     ""))
-                                 ""))]
+                               (string/format "Expected a symbol for variadic argument.%s"
+                                 (if (< i (n args))
+                                   (with (next-arg (nth args (succ i)))
+                                     (if (and (symbol? next-arg) (/= (string/char-at (.> next-arg :contents) 1) "&"))
+                                       (string/format "\nDid you mean '&%s'?" (.> next-arg :contents))
+                                       ""))
+                                   "")))]
                             [true
                              (set! name (string/sub name 2))
                              (set! has-variadic true)]))
@@ -302,18 +485,18 @@
                           (.<! (state/rs-compiler state) :active-scope scope)
                           (.<! (state/rs-compiler state) :active-node  built)
 
-                          (case (list (xpcall func traceback/traceback))
+                          (case (state/rs-exec state func)
                             [(false ?msg)
                              (error-positions! (state/rs-logger state) node (traceback/remap-traceback (state/rs-mappings state) msg))]
                             [(true . ?replacement)
                              (cond
                                [(= i (n node))
                                 (for-each child replacement
-                                  (push-cdr! result child)
-                                  (push-cdr! states child-state))]
+                                  (push! result child)
+                                  (push! states child-state))]
                                [(= (n replacement) 1)
-                                (push-cdr! result (car replacement))
-                                (push-cdr! states child-state)]
+                                (push! result (car replacement))
+                                (push! states child-state)]
                                [true (error-positions! (state/rs-logger state) (nth node i) (.. "Expected one value, got " (n replacement)))])]))))
 
                     (when (or (= (n result) 0) (and (= (n result) 1) (= (car result) nil)))
@@ -352,7 +535,7 @@
                       (.<! (state/rs-compiler state) :active-scope scope)
                       (.<! (state/rs-compiler state) :active-node  built)
 
-                      (case (list (xpcall func traceback/traceback))
+                      (case (state/rs-exec state func)
                         [(false ?msg)
                          (error-positions! (state/rs-logger state) node (traceback/remap-traceback (state/rs-mappings state) msg))]
                         [(true . ?replacement)
@@ -414,6 +597,10 @@
 
                   (expect-type! (state/rs-logger state) (nth node 2) node "symbol" "name")
                   (with (var (scope/add-verbose! scope (.> (nth node 2) :contents) "native" node (state/rs-logger state)))
+                    ;; Copy metadata across
+                    (when-with (native (library-cache-meta (.> (state/rs-compiler state) :libs) (scope/var-unique-name var)))
+                      (scope/set-var-native! var native))
+
                     (scope/set-var-display-name! var (.> (nth node 2) :display-name))
                     (state/define! state var)
                     (.<! node :def-var var)
@@ -496,7 +683,7 @@
                  (.<! (state/rs-compiler state) :active-node  node)
 
                  ;; Execute the macro
-                 (case (list (xpcall (lambda () (apply builder (cdr node))) traceback/traceback))
+                 (case (state/rs-exec state (lambda () (apply builder (cdr node))))
                    ;; The macro failed so remap the traceback and error
                    [(false ?msg)
                     (error-positions! (state/rs-logger state) first (traceback/remap-traceback (state/rs-mappings state) msg))]

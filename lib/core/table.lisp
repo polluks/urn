@@ -1,8 +1,9 @@
 (import core/base (defmacro defun let* when if list unless gensym slice progn get-idx
               set-idx! error = /= mod - + n or for for-pairs with not apply else))
 (import lua/basic (next len#) :export)
-(import core/type (key? assert-type!))
+(import core/demand (assert-type!))
 (import core/list ())
+(import core/type (key?))
 
 (defun struct->list (tbl)
   "Converts a structure TBL that is a list by having its keys be indices
@@ -57,7 +58,7 @@
     (for i 1 (- (n keys) 1) 1
       (with (key (get-idx keys i))
         (set! res `(get-idx ,res ,key))))
-    `(set-idx! ,res ,(get-idx keys (n keys) 1) ,value)))
+    `(set-idx! ,res ,(get-idx keys (n keys)) ,value)))
 
 (defun struct (&entries)
   "Return the structure given by the list of pairs ENTRIES. Note that, in
@@ -137,13 +138,13 @@
 (defun keys (st)
   "Return the keys in the structure ST."
   (with (out '())
-    (for-pairs (k _) st (push-cdr! out k))
+    (for-pairs (k _) st (push! out k))
     out))
 
 (defun values (st)
   "Return the values in the structure ST."
   (with (out '())
-    (for-pairs (_ v) st (push-cdr! out v))
+    (for-pairs (_ v) st (push! out v))
     out))
 
 (defun update-struct (st &keys)

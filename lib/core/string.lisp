@@ -1,10 +1,12 @@
 (import core/base (defun getmetatable if n progn with for tostring len#
               type# >= > < <= = /= + - car or and list when set-idx!
               get-idx getmetatable while .. defmacro else))
-(import core/type (pretty))
-(import core/base (concat) :export)
-(import core/list list)
+(import core/base b)
 (import core/binders (loop let*))
+(import core/list list)
+(import core/method (pretty))
+(import core/demand (assert-type!))
+
 (import lua/string () :export)
 
 (defun char-at (xs x)
@@ -16,6 +18,22 @@
    out = \"f\"
    ```"
   (sub xs x x))
+
+(defun concat (xs separator)
+  "Concatenate a list of strings, using an optional separator.
+
+   ### Example
+   ```cl
+   > (concat '(\"H\" \"i\" \"!\"))
+   out = \"Hi!\"
+   > (concat '(\"5\" \"+\" \"1\") \" \")
+   out = \"5 + 1\"
+   ```"
+  (assert-type! xs list)
+  (with (parent (get-idx xs :parent))
+    (if parent
+      (b/concat (get-idx xs :parent) separator (+ (get-idx xs :offset) 1) (+ (get-idx xs :n) (get-idx xs :offset)))
+      (b/concat xs separator 1 (get-idx xs :n)))))
 
 (defun split (text pattern limit)
   "Split the string given by TEXT in at most LIMIT components, which are
@@ -43,21 +61,21 @@
           ;; and exit.
           [(or (= nstart nil) (and limit (>= (n out) limit)))
            (set! loop false)
-           (list/push-cdr! out (sub text start (n text)))
+           (list/push! out (sub text start (n text)))
            (set! start (+ (n text) 1))]
           ;; If the start is beyond the string length (somehow) then maybe append the remaining text
           ;; and exit.
           [(> nstart (len# text))
            (when (<= start (len# text))
-             (list/push-cdr! out (sub text start (len# text))))
+             (list/push! out (sub text start (len# text))))
            (set! loop false)]
           ;; If the end point is before the start point (0 width match) then we'll gobble just one character
           [(< nend nstart)
-           (list/push-cdr! out (sub text start nstart))
+           (list/push! out (sub text start nstart))
            (set! start (+ nstart 1))]
           ;; Otherwise gobble everything between matches
           [else
-            (list/push-cdr! out (sub text start (- nstart 1)))
+            (list/push! out (sub text start (- nstart 1)))
             (set! start (+ nend 1))])))
     out))
 
@@ -147,7 +165,7 @@
    > (bytes->string '(72 101 108 108 111))
    out = \"Hello\"
    ```"
-  (concat (list/map char bytes)))
+  (b/concat (list/map char bytes)))
 
 (defun chars->string (chars)
   "Convert a list of CHARS to a string.
@@ -157,7 +175,7 @@
    > (chars->string '(\"H\" \"e\" \"l\" \"l\" \"o\"))
    out = \"Hello\"
    ```"
-  (concat chars "" 1 (n chars)))
+  (b/concat chars "" 1 (n chars)))
 
 (defun display (x) :hidden
   (cond
@@ -189,15 +207,15 @@
            (chr (char-at str 1))
            (buf "")]
       [(> i (n str))
-       (when (/= buf "") (list/push-cdr! sections buf))]
+       (when (/= buf "") (list/push! sections buf))]
       (let* [((rs re rm) (find (sub str i)
                                "~%{([^%} ]+)%}"))
              ((is ie im) (find (sub str i)
                                "%$%{([^%} ]+)%}"))]
         (cond
           [(= rs 1) ; regular ~{foo}
-           (when (/= buf "") (list/push-cdr! sections buf))
-           (list/push-cdr! sections
+           (when (/= buf "") (list/push! sections buf))
+           (list/push! sections
                            `(display
                               ,{ :tag "symbol"
                                  :contents rm }))
@@ -205,8 +223,8 @@
                   (char-at str (+ i re))
                   "")]
           [(= is 1) ; plain ${foo}
-           (when (/= buf "") (list/push-cdr! sections buf))
-           (list/push-cdr! sections
+           (when (/= buf "") (list/push! sections buf))
+           (list/push! sections
                            { :tag "symbol"
                              :contents im })
            (recur (+ i ie)

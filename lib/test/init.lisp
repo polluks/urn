@@ -37,11 +37,11 @@
     (xpcall
       (lambda ()
         ,@body
-        (push-cdr! ,tests-passed (.. ,prefix " " ,name (if ,time (string/format " (took %.2f seconds)" (- (clock) ,start-time)) "")))
+        (push! ,tests-passed (.. ,prefix " " ,name (if ,time (string/format " (took %.2f seconds)" (- (clock) ,start-time)) "")))
         (marker 32))
       (lambda (,'msg)
         (marker 31)
-        (push-cdr! ,tests-failed (list (.. ,prefix " " ,name) (if ,quiet (format-err ,'msg) (traceback (format-err ,'msg)))))))))
+        (push! ,tests-failed (list (.. ,prefix " " ,name) (if ,quiet (format-err ,'msg) (traceback (format-err ,'msg)))))))))
 
 (defmacro pending (name &body)
   "Create a test NAME whose BODY will not be run.
@@ -50,7 +50,7 @@
    to be fixed, or features which have not been implemented yet"
   `(progn
      (marker 33)
-     (push-cdr! ,tests-pending (.. ,prefix " " ,name))))
+     (push! ,tests-pending (.. ,prefix " " ,name))))
 
 (defmacro section (name &body)
   "Create a group of tests defined in BODY whose names take the form
@@ -89,8 +89,8 @@
          (,tests-pending '())
          (,tests-total 0)
          (,prefix ,name)
-         (,quiet (any (lambda (,'x) (or (= ,'x "--quiet") (= ,'x "-q"))) arg))
-         (,time  (any (lambda (,'x) (or (= ,'x "--time") (= ,'x "-t"))) arg))]
+         (,quiet (any (lambda (,'x) (or (= ,'x "--quiet") (= ,'x "-q"))) *arguments*))
+         (,time  (any (lambda (,'x) (or (= ,'x "--time") (= ,'x "-t"))) *arguments*))]
      ,@body
 
      (when (and ,quiet (or (> ,tests-total 0) (> (n ,tests-pending) 0)))

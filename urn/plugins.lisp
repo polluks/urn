@@ -39,7 +39,8 @@
                                   (error/do-node-error!     logger msg (range/get-top-source node) explain (splice lines)))
       :range/get-source    range/get-source
       :flags               (lambda () (map id (.> compiler :flags)))
-      :flag?               (cut elem? <> (.> compiler :flags))
+      :flag?               (lambda (&flags)
+                             (any (cut elem? <> (.> compiler :flags)) flags))
 
       ;; nodes.lisp
       :visit-node     visitor/visit-node
@@ -83,13 +84,13 @@
                             [(elem? "opt" cats)
                              (cond
                                [(any (cut string/starts-with? <> "transform-") cats)
-                                (push-cdr! (.> optimise :transform) pass)]
-                               [(elem? "usage" cats) (push-cdr! (.> optimise :usage) pass)]
-                               [else                 (push-cdr! (.> optimise :normal) pass)])]
+                                (push! (.> optimise :transform) pass)]
+                               [(elem? "usage" cats) (push! (.> optimise :usage) pass)]
+                               [else                 (push! (.> optimise :normal) pass)])]
                             [(elem? "warn" cats)
                              (cond
-                               [(elem? "usage" cats) (push-cdr! (.> warnings :usage) pass)]
-                               [else                 (push-cdr! (.> warnings :normal) pass)])]
+                               [(elem? "usage" cats) (push! (.> warnings :usage) pass)]
+                               [else                 (push! (.> warnings :normal) pass)])]
                             [else (error! (.. "Cannot register " (pretty (.> pass :name)) " (do not know how to process " (pretty cats) ")"))]))
                         nil)
       :var-usage      usage/get-var
@@ -104,10 +105,14 @@
                             [(not scp) nil]
                             [(scope/scope-top-level? scp) scp]
                             [else (recur (scope/scope-parent scp))])))
-      :scope-vars     (lambda (scp)
-                        (if (not scp)
-                          (.> (active-scope) :variables)
-                          (.> scp :variables)))
+      :scope-vars     (lambda (scope)
+                        (unless scope (set! scope (active-scope)))
+                        (assert-type! scope scope)
+                        (scope/scope-variables scope))
+      :scope-exported (lambda (scope)
+                        (unless scope (set! scope (active-scope)))
+                        (assert-type! scope scope)
+                        (scope/scope-exported scope))
       :var-lookup     (lambda (symb scope)
                         (assert-type! symb symbol)
                         (when (= (active-node) nil) (error! "Not currently resolving"))

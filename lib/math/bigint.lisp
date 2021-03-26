@@ -1,6 +1,6 @@
 (import lua/math (abs max floor ceil log))
 
-(define num-tag   :hidden "bignum")
+(define num-tag   :hidden "bigint")
 (define part-bits :hidden 24)
 (define part-max  :hidden (expt 2 part-bits))
 
@@ -17,7 +17,7 @@
   (with (val (new))
     (.<! val :sign (.> a :sign))
     (for-each part (.> a :parts)
-      (push-cdr! (.> val :parts) part))
+      (push! (.> val :parts) part))
     val))
 
 (defun negate (a)
@@ -46,7 +46,7 @@
                  (val-parts (.> val :parts))
                  (max-parts (max (n (.> a :parts)) (n (.> b :parts))))]
             (for i 1 (+ max-parts 1) 1
-              (push-cdr! val-parts 0))
+              (push! val-parts 0))
             (for i 1 max-parts 1
               (with (new-part (+ (or (nth a-parts i) 0) (or (nth b-parts i) 0) (nth val-parts i)))
                 (.<! val-parts i (mod new-part part-max))
@@ -70,7 +70,7 @@
                  (val-parts (.> val :parts))
                  (max-parts (max (n (.> a :parts)) (n (.> b :parts))))]
             (for i 1 max-parts 1
-              (push-cdr! val-parts 0))
+              (push! val-parts 0))
             (for i 1 max-parts 1
               (with (new-part (- (or (nth a-parts i) 0) (or (nth b-parts i) 0) (nth val-parts i)))
                 (.<! val-parts i (mod new-part part-max))
@@ -139,7 +139,7 @@
     [(and (/= (type a) num-tag) (= (type b) num-tag)) (power (new a) b)]
     [(< b (new 0)) (new 0)]
     [(= b (new 0)) (new 1)]
-    [(= b (new 1) a)]
+    [(= b (new 1)) a]
     [else
       (let* [(val a)
              (r b)]
@@ -150,7 +150,7 @@
 
 
 (defun shl! (a b)
-  "Shifts (modifies) A to the left by B. B should be a normal integer, not of type bignum."
+  "Shifts (modifies) A to the left by B. B should be a normal integer, not of type bigint."
   (with (a-parts (.> a :parts))
     (for i 1 b 1
       (for j (n a-parts) 1 -1
@@ -158,17 +158,17 @@
           (.<! a-parts j (mod new-val part-max))
           (when (>= new-val part-max) ; carry
             (if (= j (n a-parts))
-              (push-cdr! a-parts 1)
+              (push! a-parts 1)
               (.<! a-parts (+ j 1) (+ (nth a-parts (+ j 1)) 1)))))))))
 
 (defun shl (a b)
-  "Returns A shifted left by B. B should be a normal integer, not of type bignum."
+  "Returns A shifted left by B. B should be a normal integer, not of type bigint."
   (with (val (copy a))
     (shl! val b)
     val))
 
 (defun shr! (a b)
-  "Shifts (modifies) A to the right by B. B should be a normal integer, not of type bignum."
+  "Shifts (modifies) A to the right by B. B should be a normal integer, not of type bigint."
   (with (a-parts (.> a :parts))
     (for i 1 b 1
       (for j 1 (n a-parts) 1
@@ -179,7 +179,7 @@
   (trim! a))
 
 (defun shr (a b)
-  "Returns A shifted right by B. B should be a normal integer, not of type bignum."
+  "Returns A shifted right by B. B should be a normal integer, not of type bigint."
   (with (val (copy a))
     (shr! val b)
     val))
@@ -200,7 +200,7 @@
       (+ (* (- a-len 1) part-bits) (floor (/ (log (nth a-parts a-len)) (log 2))) 1))))
 
 (defun tostring (a format)
-  "Converts the bignum A to a string. FORMAT is optional and can be either
+  "Converts the bigint A to a string. FORMAT is optional and can be either
     - 'd' (decimal, default),
     - 'x' (lowercase hex),
     - 'X' (uppercase hex),
@@ -233,7 +233,7 @@
                             (step-format (.. "%" (string/format "%02u" step-digits) "u"))
                             (step (new (expt 10 step-digits)))]
                        (for i 1 (+ (ceil (/ (log (expt 2 (* (n (.> a :parts)) part-bits))) (log step-exp))) 1) 1
-                         (push-cdr! parts (string/format step-format (or (car (.> (mod vald step) :parts)) 0)))
+                         (push! parts (string/format step-format (or (car (.> (mod vald step) :parts)) 0)))
                          (set! vald (/ vald step)))
                        (string/concat (reverse parts)))]))]
     (while (= (string/char-at str 1) "0")
@@ -298,7 +298,7 @@
     :__le less-or-equal? })
 
 (defun new (a)
-  "Creates a new bignum from A.
+  "Creates a new bigint from A.
    A is optional and can be either a normal integer, or a string.
    A string can begin with '0x' (hex), '0o' (octal), '0b' (binary),
    otherwise it's parsed as a decimal value."
@@ -315,7 +315,7 @@
                                   (p (tonumber (string/sub a start-pos end-pos) base))]
                              (if (= p nil)
                                (error! "unexpected symbol in string.")
-                               (push-cdr! parts p)))))))]
+                               (push! parts p)))))))]
     (cond
       [(= a nil) nil]
       [(= (type a) "string")
@@ -336,7 +336,7 @@
                 (num-parts (+ (floor (/ (log n) (log 2) part-bits)) 1))]
            (.<! val :sign (< a 0))
            (for i 0 (- num-parts 1) 1
-             (push-cdr! parts (floor (mod (/ n (expt part-max i)) part-max))))))]
+             (push! parts (floor (mod (/ n (expt part-max i)) part-max))))))]
       [else (error! (.. "string, number or nothing expected, got " (type a) "."))])
     (trim! val)
     val))

@@ -36,6 +36,13 @@
       (= char "(") (= char ")") (= char "[") (= char "]") (= char "{") (= char "}")
       (= char "\v") (= char "\f") (= char "")))
 
+(defun closing-terminator? (char)
+  "Determines whether CHAR is a terminator of a block"
+  :hidden
+  (or (= char "\n") (= char " ") (= char "\t") (= char ";")
+      (= char ")") (= char "]") (= char "}")
+      (= char "\v") (= char "\f") (= char "")))
+
 (defun digit-error! (logger pos name char)
   "Generate an error at POS where a NAME digit was expected and CHAR received instead"
   :hidden
@@ -87,7 +94,7 @@
                                (finish (or finish (position)))]
                            (.<! data :source (range start finish))
                            (.<! data :contents (string/sub str (pos-offset start) (pos-offset finish)))
-                           (push-cdr! out data))))
+                           (push! out data))))
          ;; Appends a token to the list
          (append! (lambda (tag start finish)
                     (append-with! {:tag tag} start finish)))
@@ -104,9 +111,7 @@
                                      (= char "'")) ; thousands separator
                             (consume!)
                             (set! char (string/char-at str (succ offset))))
-                          ; now this is a hack
-                          (let* [(str (apply .. (string/split (string/reverse (string/sub str start offset))
-                                                              "'")))]
+                          (with (str (string/gsub (string/reverse (string/sub str start offset)) "'" ""))
                             ; This implementation was stolen and adapted from
                             ; the Rosetta code entry for decoding Roman numerals
                             ; in Scheme.
@@ -130,8 +135,7 @@
                            (consume!)
                            (set! char (string/char-at str (succ offset))))
 
-                         (let* [(thousands-separated (apply .. (string/split (string/sub str start offset)
-                                                                             "'")))]
+                         (with (thousands-separated (string/gsub (string/sub str start offset) "'" ""))
                            ;; And convert the digit to a string
                            (string->number thousands-separated base)))))]
     ;; Scan the input stream, consume one character, then read til the end of that token.
@@ -148,6 +152,9 @@
           [(= char "'") (append! "quote")]
           [(= char "`") (append! "syntax-quote")]
           [(= char "~") (append! "quasiquote")]
+          [(and (= char "@") (not (closing-terminator? (string/char-at str (succ offset)))))
+           ;; For backwards compatibility reasons we should ensure we've got some symbols after this.
+           (append! "splice")]
           [(= char ",")
            (if (= (string/char-at str (succ offset)) "@")
              (with (start (position))
@@ -281,6 +288,13 @@
                        (consume!)))
 
                    (with (res (string->number (id (string/gsub (string/sub str (pos-offset start) offset) "'" ""))))
+                     (unless res
+                       (error/do-node-error! logger
+                         (string/format "Expected digit, got %s" (if (= char "")
+                                                                   "eof"
+                                                                   (string/quoted char)))
+                         (range (position)) nil
+                         (range (position)) "Illegal character here. Are you missing whitespace?"))
                      (append-with! { :tag "number" :value res } start))])])
 
              ;; Ensure the next character is a terminator of some sort, otherwise we'd allow things like 0x2-2
@@ -291,7 +305,7 @@
                (error/do-node-error! logger
                  (string/format "Expected digit, got %s" (if (= char "")
                                                            "eof"
-                                                           char))
+                                                           (string/quoted char)))
                  (range (position)) nil
                  (range (position)) "Illegal character here. Are you missing whitespace?")))]
           [(or (= char "\"") (and (= char "$") (= (string/char-at str (succ offset)) "\"")))
@@ -314,7 +328,7 @@
                         [(= char "\n")
                          ;; Got a new line, we'll append it to the buffer and reset the start position.
                          (consume!)
-                         (push-cdr! buffer "\n")
+                         (push! buffer "\n")
                          (set! line-off offset)]
                         [(= char "")
                          ;; Got an EOF, we'll handle this in the next block so just exit.
@@ -328,7 +342,7 @@
                             (range (position)) "Mis-aligned character here")
 
                           ;; Append all the spaces.
-                          (push-cdr! buffer (string/sub str line-off (pred offset)))
+                          (push! buffer (string/sub str line-off (pred offset)))
                           (set! running false)])
                       (set! char (string/char-at str offset)))))
                 (cond
@@ -347,16 +361,16 @@
                      ;; Skip new lines
                      [(= char "\n")]
                      ;; Various escape codes
-                     [(= char "a") (push-cdr! buffer "\a")]
-                     [(= char "b") (push-cdr! buffer "\b")]
-                     [(= char "f") (push-cdr! buffer "\f")]
-                     [(= char "n") (push-cdr! buffer "\n")]
-                     [(= char "r") (push-cdr! buffer "\r")]
-                     [(= char "t") (push-cdr! buffer "\t")]
-                     [(= char "v") (push-cdr! buffer "\v")]
+                     [(= char "a") (push! buffer "\a")]
+                     [(= char "b") (push! buffer "\b")]
+                     [(= char "f") (push! buffer "\f")]
+                     [(= char "n") (push! buffer "\n")]
+                     [(= char "r") (push! buffer "\r")]
+                     [(= char "t") (push! buffer "\t")]
+                     [(= char "v") (push! buffer "\v")]
                      ;; Escaped characters
-                     [(= char "\"") (push-cdr! buffer "\"")]
-                     [(= char "\\") (push-cdr! buffer "\\")]
+                     [(= char "\"") (push! buffer "\"")]
+                     [(= char "\\") (push! buffer "\\")]
                      ;; And character codes
                      [(or (= char "x") (= char "X") (between? char "0" "9"))
                       (let [(start (position))
@@ -392,7 +406,7 @@
                             (range start) nil
                             (range start (position)) (.. "Must be between 0 and 255, is " val)))
 
-                        (push-cdr! buffer (string/char val)))]
+                        (push! buffer (string/char val)))]
                      [(= char "")
                       (eof-error! (and cont "string") out logger
                         "Expected escape code, got eof"
@@ -405,7 +419,7 @@
                          (range (position)) "Unknown escape character")])]
                   ;; Boring normal characters
                   [true
-                   (push-cdr! buffer char)])
+                   (push! buffer char)])
                 (consume!)
                 (set! char (string/char-at str offset)))
               (if interpolate
@@ -417,15 +431,15 @@
                            ((is ie im) (string/find value "%$%{([^%} ]+)%}" i))]
                       (cond
                         [(and rs (=> is (< rs is)))
-                         (push-cdr! sections (string/sub value i (pred rs)))
-                         (push-cdr! sections (.. "{#" rm "}"))
+                         (push! sections (string/sub value i (pred rs)))
+                         (push! sections (.. "{#" rm "}"))
                          (recur (succ re))]
                         [is
-                         (push-cdr! sections (string/sub value i (pred is)))
-                         (push-cdr! sections (.. "{#" im ":id}"))
+                         (push! sections (string/sub value i (pred is)))
+                         (push! sections (.. "{#" im ":id}"))
                          (recur (succ ie))]
                         [else
-                         (push-cdr! sections (string/sub value i len))])))
+                         (push! sections (string/sub value i len))])))
 
                   (logger/put-node-warning! logger
                     "The $ syntax is deprecated and should be replaced with format."
@@ -461,12 +475,12 @@
 
          ;; Append a node onto the current head
          (append! (lambda (node)
-                    (push-cdr! head node)))
+                    (push! head node)))
 
          ;; Push a node onto the stack, appending it to the previous head
          (push! (lambda ()
                   (with (next '())
-                    (push-cdr! stack head)
+                    (push! stack head)
                     (append! next)
                     (set! head next))))
 
@@ -577,7 +591,8 @@
                ;; All OK!
                (.<! head :source (range-of-span (.> head :source) (.> tok :source)))
                (pop!)])]
-          [(or (= tag "quote") (= tag "unquote") (= tag "syntax-quote") (= tag "unquote-splice") (= tag "quasiquote"))
+          [(or (= tag "quote") (= tag "unquote") (= tag "syntax-quote") (= tag "unquote-splice")
+               (= tag "quasiquote") (= tag "splice"))
            (push!)
            (.<! head :source (.> tok :source))
            (append! { :tag      "symbol"
@@ -589,7 +604,9 @@
           [(= tag "eof")
            (when (/= 0 (n stack))
              (eof-error! (and cont "list") toks logger
-               (string/format "Expected '%s', got 'eof'" (.> head :close))
+               (if (.> head :auto-close)
+                 (string/format "Expected expression quote, got eof" (.> head :close))
+                 (string/format "Expected '%s', got eof" (.> head :close)))
                (.> tok :source) nil
                (.> head :source) "block opened here"
                (.> tok :source)  "end of file here"))]

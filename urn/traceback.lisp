@@ -2,10 +2,40 @@
 
 (import urn/range ())
 
+(defun traceback-plain (&args)
+  "A wrapper for [[debug/traceback]] which only calls it if it exists."
+  (cond
+    [debug/traceback (apply debug/traceback args)]
+    [(empty? args) ""]
+    [else (car args)]))
+
 (defun traceback (msg)
   "An alternative for [[debug/traceback]] which correctly remaps the error."
   (unless (string? msg) (set! msg (pretty msg)))
-  (debug/traceback msg 2))
+  (traceback-plain msg 2))
+
+(defun truncate-traceback (trace)
+  "Remove trailing lines from the provided TRACE."
+  (let* [(there (string/split trace "\n"))
+         (here (string/split (traceback-plain) "\n"))]
+    ;; First strip the common suffix
+    (loop [(i (math/min (n here) (n there)))]
+      [(<= i 1)]
+      (when (= (nth here i) (nth there i))
+        (remove-nth! here i)
+        (recur (pred i))))
+
+    ;; If we contain an xpcall then strip up to and including that.
+    ;; Note we use xpcall1 instead, as we're executing in Urn and so
+    ;; it'll be mangled.
+    (loop [(i (n there))]
+      [(<= i 1)]
+      (if (or (= (nth there i) "\t[C]: in function 'xpcall1'")
+              (= (nth there i) "\t[C]: in function 'xpcall'"))
+        (for j (n there) i -1 (remove-nth! there j))
+        (recur (pred i))))
+
+    (concat there "\n")))
 
 (defun unmangle-ident (ident)
   "Attempt to unmangle IDENT, converting it from the escaped form to the unescaped form."
@@ -29,14 +59,14 @@
                    [(?start ?end)
                    (inc! pos)
                    (while (< pos end)
-                     (push-cdr! buffer (string/char (string->number (string/sub esc pos (succ pos)) 16)))
+                     (push! buffer (string/char (string->number (string/sub esc pos (succ pos)) 16)))
                      (set! pos (+ pos 2)))]
                    [_
-                   (push-cdr! buffer "_")]))
+                   (push! buffer "_")]))
                ((between? char "A" "Z")
-                 (push-cdr! buffer "-")
-                 (push-cdr! buffer (string/lower char)))
-               (true (push-cdr! buffer char))))
+                 (push! buffer "-")
+                 (push! buffer (string/lower char)))
+               (true (push! buffer char))))
            (inc! pos))
          (concat buffer))])))
 
@@ -65,6 +95,7 @@
 (defun remap-traceback (mappings msg)
   "Remap the traceback MSG using the line MAPPINGS. Also attempt to unmangle variable names."
   (-> msg
+    truncate-traceback
     (string/gsub <> "^([^\n:]-:%d+:[^\n]*)" (cut remap-message mappings <>))
     (string/gsub <> "\t([^\n:]-:%d+:)" (lambda (msg) (.. "\t" (remap-message mappings msg))))
     (string/gsub <> "<([^\n:]-:%d+)>\n" (lambda (msg) (.. "<" (remap-message mappings msg) ">\n")))

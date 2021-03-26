@@ -1,18 +1,20 @@
-(import core/base (lambda defun defmacro progn for while if quasiquote const-val and or
-                   xpcall pcall values-list gensym tostring tonumber getmetatable require
-                   => <=> splice list when unless arg apply for-pairs first second third
-                   setmetatable n else fourth fifth sixth seventh ninth tenth + - * / mod expt
-                   slice not = /= < <= >= > ..) :export)
+(import core/base (lambda defun defmacro progn for while if quasiquote const-val and or xpcall pcall
+                   values-list gensym tostring tonumber getmetatable require => <=> splice list when
+                   unless arg *arguments* apply for-pairs first second third setmetatable n else
+                   fourth fifth sixth seventh ninth tenth -and -or + - * / mod expt slice not = /=
+                   < <= >= > ..) :export)
 
 (import core/base b)
-(import core/string (concat $) :export)
 (import core/binders () :export)
+(import core/demand () :export)
 (import core/list () :export)
+(import core/match () :export)
+(import core/method () :export)
+(import core/string (concat $) :export)
 (import core/string string :export)
-(import core/match (destructuring-bind case handler-case matches? function if-match) :export)
+(import core/symbol () :export)
 (import core/table () :export)
 (import core/type () :export)
-(import core/symbol () :export)
 
 (import lua/os)
 (import lua/io (write) :export)

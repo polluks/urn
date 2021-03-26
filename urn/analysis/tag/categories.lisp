@@ -5,6 +5,7 @@
 (import urn/analysis/visitor visitor)
 (import urn/range range)
 (import urn/resolve/scope scope)
+(import urn/resolve/native native)
 
 (defmacro cat (category &args)
   "Create a CATEGORY data set, using ARGS as additional parameters to [[struct]]."
@@ -230,34 +231,35 @@
                     [true
                      ;; As we're invoking a known symbol here, we can do some fancy stuff. In this case, we just
                      ;; "inline" anything defined in library meta data (such as arithmetic operators).
-                     (let* [(meta (and (= (scope/var-kind func) "native") (.> state :meta (scope/var-unique-name func))))
-                            (meta-ty (type meta))]
+                     (with (meta (and (= (scope/var-kind func) "native") (scope/var-native func)))
                        ;; Obviously metadata only exists for native expressions. We can only emit it if
                        ;; we're in the right context (statements cannot be emitted when we require an expression) and
                        ;; we've passed in the correct number of arguments.
-                       (case meta-ty
-                         ["nil"]
-                         ["boolean"]
-                         ["expr"]
-                         ["stmt"
-                          ;; Cannot use statements if we're in an expression
-                          (unless stmt (set! meta nil))]
-                         ["var"
-                          ;; We'll have cached the global lookup above
-                          (set! meta nil)])
+                       (when (and meta
+                                  (or
+                                    ;; If we're binding to a variable then no need to emit fancy calls
+                                    (native/native-bind-to meta)
+                                    ;; If we're a statement in a non-statement context then emit a raw call.
+                                    (and (not stmt) (native/native-syntax-stmt? meta))))
+                         (set! meta nil))
 
                        (cond
-                         [(and meta (if (.> meta :fold)
-                                      (>= (pred (n node)) (.> meta :count))
-                                      (= (pred (n node)) (.> meta :count))))
+                         [(and meta (if (native/native-syntax-fold meta)
+                                      (>= (pred (n node)) (native/native-syntax-arity meta))
+                                      (= (pred (n node)) (native/native-syntax-arity meta))))
                           (visit-nodes lookup state node 1 false)
 
                           ;; Mark child nodes as requiring parenthesis.
-                          (let* [(prec (.> meta :prec))
-                                 (precs (.> meta :precs))]
-                            (when (or prec precs) (add-parens lookup node 2 prec precs))
+                          (with (prec (native/native-syntax-precedence meta))
+                            (cond
+                              [(list? prec) (add-parens lookup node 2 nil prec)]
+                              [(number? prec) (add-parens lookup node 2 prec nil)]
+                              [else])
 
-                            (cat "call-meta" :meta meta :stmt (= meta-ty "stmt") :prec prec))]
+                            (cat "call-meta"
+                              :meta meta
+                              :stmt (native/native-syntax-stmt? meta)
+                              :prec (and (number? prec) prec)))]
                          [(and recur (= func (.> recur :var)))
                           (.<! recur :tail true)
                           (visit-nodes lookup state node 1 false)
@@ -296,7 +298,10 @@
                      ;; Attempt to determine expressions of the form ((lambda (x) x) Y)
                      ;; where Y is an expression.
                      (= (n node) 2) (builtin? (car head) :lambda)
+                     ;; One non-variadic argument
                      (= (n head) 3) (= (n (nth head 2)) 1)
+                     (not (scope/var-variadic? (.> (car (nth head 2)) :var)))
+                     ;; Whose body is just that variable.
                      (symbol? (nth head 3)) (= (.> (nth head 3) :var) (.> (car (nth head 2)) :var)))
 
                    ;; We now need to visit the child node.
@@ -310,6 +315,33 @@
                          ;; our fancy let bindings or just a normal call.
                          (cat "call-lambda" :stmt stmt))
                        (cat "wrap-value")))]
+
+                  [(and
+                     ;; Attempt to determine expressions of the form ((lambda (&x) x) Y...)
+                     ;; where Y are all expressions
+                     (builtin? (car head) :lambda)
+                     ;; One variadic argument
+                     (= (n head) 3) (= (n (nth head 2)) 1)
+                     (scope/var-variadic? (.> (car (nth head 2)) :var))
+                     ;; Whose body is just that variable.
+                     (symbol? (nth head 3)) (= (.> (nth head 3) :var) (.> (car (nth head 2)) :var))
+                     ;; The last Y is a single return (or we have no values)
+                     (or (= (n node) 1) (single-return? (last node))))
+
+                   ;; We now need to visit the child node.
+                   (with (node-stmt false)
+                     (for i 2 (n node) 1
+                       (with (child-cat (visit-node lookup state (nth node i) stmt test))
+                         (when (and (.> child-cat :stmt) (not node-stmt))
+                           (set! node-stmt true)
+                           (.<! lookup head (cat "lambda" :prec 100 :parens true))
+                           (visit-node lookup state (nth head 3) true false))))
+
+                     ;; If we got a statement out of it, then we either need to emit
+                     ;; our fancy let bindings or just a normal call.
+                     (if node-stmt
+                       (cat "call-lambda" :stmt stmt)
+                       (cat "wrap-list" :prec 100)))]
 
                   [(and
                      ;; Attempt to determine expressions of the form ((lambda (x) (cond [x ...] ...)) Y)

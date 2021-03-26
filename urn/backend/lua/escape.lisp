@@ -9,6 +9,11 @@
                    "if" "in" "local" "nil" "not" "or" "repeat" "return" "then" "true"
                    "until" "while")))
 
+(defun lua-ident? (ident)
+  "Determines if the given IDENT is a valid Lua identifier."
+  (and (string/match ident "^[%a_][%w_]*$")
+       (= (.> keywords ident) nil)))
+
 (defun ident? (x)
   "Determine whether X is a usable identifier character"
   :hidden
@@ -96,7 +101,7 @@
   (if (builtin-var? var)
     (scope/var-name var)
     (with (esc (.> state :var-lookup var))
-      (unless esc (format 1 "{:id} hs not been escaped (at {:id})"
+      (unless esc (format 1 "{:id} has not been escaped (at {:id})"
                             (scope/var-name var)
                             (if (scope/var-node var) (format/format-node (scope/var-node var)) "?")))
       esc)))

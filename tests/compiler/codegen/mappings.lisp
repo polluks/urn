@@ -16,7 +16,7 @@
 (defun affirm-mappings (input-src expected-src)
   "Affirm compiling INPUT-NODES generates EXPECTED-SRC."
   (let* [(compiler (create-compiler))
-         (compile-state (lua/create-state (.> compiler :lib-meta)))
+         (compile-state (lua/create-state))
          (writer (writer/create))]
     (.<! compiler :compile-state compile-state)
 
@@ -42,8 +42,8 @@
 
         (when (/= (concat res "\n") expected-src)
           (with (out '())
-            (push-cdr! out "Unexpected result compiling")
-            (push-cdr! out input-src)
+            (push! out "Unexpected result compiling")
+            (push! out input-src)
             (diff-lines (string/split expected-src "\n") res out)
             (fail! (concat out "\n"))))))))
 
@@ -78,7 +78,21 @@
                          |   else
              init.lisp:3 |     return 2
                          |   end
-                         | end)()}")))
+                         | end)()}"))
+
+    (it "of unquote-splices"
+      (affirm-mappings
+        "`(1 2
+           ,@(+ 2
+                3))"
+        "                | local _offset, _result, _temp = 0, {tag=\"list\"}
+             init.lisp:1 | _result[1 + _offset] = 1
+             init.lisp:1 | _result[2 + _offset] = 2
+           init.lisp:2-3 | _temp = 2 + 3
+             init.lisp:2 | for _c = 1, _temp.n do _result[2 + _c + _offset] = _temp[_c] end
+                         | _offset = _offset + _temp.n
+                         | _result.n = _offset + 2
+                         | return _result")))
 
   (section "for struct-literals"
     (it "of empty structs"
@@ -89,7 +103,7 @@
       (affirm-mappings
         "{ :foo 1
            :bar 2 }"
-        "  init.lisp:1-2 | return {[\"foo\"]=1, [\"bar\"]=2}")))
+        "  init.lisp:1-2 | return {foo=1, bar=2}")))
 
   (section "for and expressions"
     (it "which span multiple lines"

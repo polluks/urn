@@ -45,14 +45,14 @@
       (set! lst '())
       (.<! data (.> arg :name) lst))
 
-    (push-cdr! lst value)))
+    (push! lst value)))
 
 (defun set-num-action (aspec data value usage!)
   "Set the appropriate key in DATA for ARG to VALUE, ensuring it is a number."
   (with (val (string->number value))
     (if val
       (.<! data (.> aspec :name) val)
-      (usage! (.. "Expected number for " (car (.> arg :names)) ", got " value)))))
+      (usage! (.. "Expected number for " (car (.> *arguments* :names)) ", got " value)))))
 
 (defun add-argument! (spec names &options)
   "Add a new argument to SPEC, using the specified NAMES.
@@ -95,16 +95,16 @@
     (with (first (car names))
       (cond
         [(= (string/sub first 1 2) "--")
-         (push-cdr! (.> spec :opt) result)
+         (push! (.> spec :opt) result)
          (.<! result :name (string/sub first 3))]
         [(= (string/sub first 1 1) "-")
-         (push-cdr! (.> spec :opt) result)
+         (push! (.> spec :opt) result)
          (.<! result :name (string/sub first 2))]
         [else
          (.<! result :name first)
          (.<! result :narg "*")
          (.<! result :default '())
-         (push-cdr! (.> spec :pos) result)]))
+         (push! (.> spec :pos) result)]))
 
     ;; Add them to the appropriate maps
     (for-each name names
@@ -150,7 +150,7 @@
   "Add a new category with the given ID, display NAME and an optional DESCRIPTION."
   (assert-type! id string)
   (assert-type! name string)
-  (push-cdr! (.> spec :cats) { :id   id
+  (push! (.> spec :cats) { :id   id
                                :name name
                                :desc description })
   spec)
@@ -159,20 +159,20 @@
   "Append the narg doc of ARG to the BUFFER."
   :hidden
   (case (.> arg :narg)
-    ["?" (push-cdr! buffer (.. " [" (.> arg :var) "]"))]
-    ["*" (push-cdr! buffer (.. " [" (.> arg :var) "...]"))]
-    ["+" (push-cdr! buffer (.. " " (.> arg :var) " [" (.> arg :var) "...]"))]
-    [?num (for _ 1 num 1 (push-cdr! buffer (.. " " (.> arg :var))))]))
+    ["?" (push! buffer (.. " [" (.> arg :var) "]"))]
+    ["*" (push! buffer (.. " [" (.> arg :var) "...]"))]
+    ["+" (push! buffer (.. " " (.> arg :var) " [" (.> arg :var) "...]"))]
+    [?num (for _ 1 num 1 (push! buffer (.. " " (.> arg :var))))]))
 
 (defun usage! (spec name)
   "Display a short usage for the argument parser as defined in SPEC."
-  (unless name (set! name (or (nth arg 0) (.> arg -1) "?")))
+  (unless name (set! name (or (nth *arguments* 0) (.> *arguments* -1) "?")))
 
   (with (usage (list "usage: " name))
     (for-each arg (.> spec :opt)
-      (push-cdr! usage (.. " [" (car (.> arg :names))))
+      (push! usage (.. " [" (car (.> arg :names))))
       (usage-narg! usage arg)
-      (push-cdr! usage "]"))
+      (push! usage "]"))
 
     (for-each arg (.> spec :pos) (usage-narg! usage arg))
 
@@ -197,7 +197,7 @@
 
 (defun help! (spec name)
   "Display the help for the argument parser as defined in SPEC."
-  (unless name (set! name (or (nth arg 0) (.> arg -1) "?")))
+  (unless name (set! name (or (nth *arguments* 0) (.> *arguments* -1) "?")))
   (usage! spec name)
 
   (when (.> spec :desc)
@@ -238,7 +238,7 @@
 (defun parse! (spec args)
   "Parse ARGS using the argument parser defined in SPEC. Returns a
    lookup with each argument given its value."
-  (unless args (set! args arg))
+  (unless args (set! args *arguments*))
 
   (let* [(result {})
          (pos (.> spec :pos))

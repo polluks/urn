@@ -6,12 +6,12 @@
 (import urn/backend/writer w)
 (import urn/logger/format format)
 (import urn/range range)
+(import urn/resolve/native native)
 (import urn/resolve/scope scope)
 
 (defun create-pass-state (state)
   "Create a state for using in analysis passes and emitting."
   { ;; General information copied from the parent state.
-    :meta       (.> state :meta)
     :var-cache  (.> state :var-cache)
     :var-lookup (.> state :var-lookup)
 
@@ -48,53 +48,61 @@
   { :const true
     :quote true :quote-const true })
 
-(defun compile-native (out meta)
-  (with (ty (type meta))
-    (cond
-      [(= ty "var")
-       ;; Create an alias to a variable
-       (w/append-with! out (.> meta :contents))]
+(defun compile-native-fold (out meta a b)
+  :hidden
+  (for-each entry (native/native-syntax meta)
+    (case entry
+      [1 (w/append! out a)]
+      [2 (w/append! out b)]
+      [string? (w/append! out entry)])))
 
-      [(or (= ty "expr") (= ty "stmt"))
-       ;; Generate a custom function wrapper
-       (w/append! out "function(")
-       (if (.> meta :fold)
-         (w/append! out "...")
-         (for i 1 (.> meta :count) 1
-           (unless (= i 1) (w/append! out ", "))
-           (w/append! out (.. "v" (string->number i)))))
-       (w/append! out ") ")
+(defun compile-native (out var meta)
+  (cond
+    [(native/native-bind-to meta)
+     ;; Bind to a constant variable
+     (w/append-with! out (native/native-bind-to meta))]
 
-       (case (.> meta :fold)
-         [nil
-          ;; Return the value if required.
-          (when (/= (type meta) "stmt")
-            (w/append! out "return "))
-          ;; And create the template
-          (for-each entry (.> meta :contents)
-            (if (number? entry)
-              (w/append! out (.. "v" (string->number entry)))
-              (w/append! out entry)))]
-         ["l"
-          ;; Fold values from the left.
-          (w/append! out "local t = ... for i = 2, _select('#', ...) do t = ")
-          (for-each node (.> meta :contents)
-            (case node
-              [1 (w/append! out "t")]
-              [2 (w/append! out "_select(i, ...)")]
-              [string? (w/append! out node)]))
-          (w/append! out " end return t")]
-         ["r"
-          ;; Fold values from the right.
-          (w/append! out "local n = _select('#', ...) local t = _select(n, ...) for i = n - 1, 1, -1 do t = ")
-          (for-each node (.> meta :contents)
-            (case node
-              [1 (w/append! out "_select(i, ...)")]
-              [2 (w/append! out "t")]
-              [string? (w/append! out node)]))
-          (w/append! out " end return t")])
+    [(native/native-syntax meta)
+     ;; Generate a custom function wrapper
+     (w/append! out "function(")
+     (if (native/native-syntax-fold meta)
+       (w/append! out "x, ...")
+       (for i 1 (native/native-syntax-arity meta) 1
+         (unless (= i 1) (w/append! out ", "))
+         (w/append! out (.. "v" (string->number i)))))
+     (w/append! out ") ")
 
-       (w/append! out " end")])))
+     (case (native/native-syntax-fold meta)
+       [nil
+        ;; Return the value if required.
+        (unless (native/native-syntax-stmt? meta)
+          (w/append! out "return "))
+        ;; And create the template
+        (for-each entry (native/native-syntax meta)
+          (if (number? entry)
+            (w/append! out (.. "v" (string->number entry)))
+            (w/append! out entry)))]
+       ["left"
+        ;; Fold values from the left.
+        (w/append! out "local t = ")
+        (compile-native-fold out meta "x" "...")
+        (w/append! out " for i = 2, _select('#', ...) do t = ")
+        (compile-native-fold out meta "t" "_select(i, ...)")
+        (w/append! out " end return t")]
+       ["right"
+        ;; Fold values from the right.
+        (w/append! out "local n = _select('#', ...) local t = _select(n, ...) for i = n - 1, 1, -1 do t = ")
+        (compile-native-fold out meta "_select(i, ...)" "t")
+        (w/append! out " end return ")
+        (compile-native-fold out meta "x" "t")])
+
+     (w/append! out " end")]
+
+    [else
+     ;; Just copy it from the _libs table
+     (w/append! out "_libs[")
+     (w/append! out (string/quoted (scope/var-unique-name var)))
+     (w/append! out "]")]))
 
 (defun compile-expression (node out state ret break)
   :hidden
@@ -429,9 +437,19 @@
           (w/append! out "{")
           (for i 2 len 2
             (when (> i 2) (w/append! out ", "))
-            (w/append! out "[")
-            (compile-expression (nth node i) out state)
-            (w/append! out "]=")
+            (let* [(key (nth node i))
+                   (tkey (type key))]
+              (cond
+                ;; If we're a key/string and are a valid identifier then
+                ;; just emit it directly.
+                [(and (or (= tkey "string") (= tkey "key"))
+                      (lua-ident? (.> key :value)))
+                 (w/append! out (.> key :value))
+                 (w/append! out "=")]
+                [else
+                 (w/append! out "[")
+                 (compile-expression key out state)
+                 (w/append! out "]=")]))
             (compile-expression (nth node (succ i)) out state))
           (w/append! out "}")])
        (when (.> cat :parens) (w/append! out ")"))]
@@ -440,16 +458,9 @@
        (compile-expression (nth node (n node)) out state (.. (push-escape-var! (.> node :def-var) state) " = "))]
 
       ["define-native"
-       (with (meta (.> state :meta (scope/var-unique-name (.> node :def-var))))
-         (if (= meta nil)
-           ;; Just copy it from the library table value
-           (w/append-with! out (string/format "%s = _libs[%q]"
-                                              (escape-var (.> node :def-var) state)
-                                              (scope/var-unique-name (.> node :def-var))))
-           (progn
-             ;; Generate an accessor for it.
-             (w/append-with! out (string/format "%s = " (escape-var (.> node :def-var) state)))
-             (compile-native out meta))))]
+       (with (var (.> node :def-var))
+         (w/append-with! out (string/format "%s = " (escape-var var state)))
+         (compile-native out var (scope/var-native var)))]
 
       ["quote"
        ;; Quotations are "pure" so we don't have to emit anything
@@ -509,7 +520,10 @@
                  (compile-expression (nth sub 2) out state)
                  (w/line! out)
 
-                 (w/line! out (.. "for _c = 1, _temp.n do _result[" (number->string (- i offset)) " + _c + _offset] = _temp[_c] end"))
+                 (with (pos (range/get-source sub))
+                   (w/append! out (.. "for _c = 1, _temp.n do _result[" (number->string (- i offset)) " + _c + _offset] = _temp[_c] end")
+                                  (and pos (range/range-of-start pos))))
+                 (w/line! out)
                  (w/line! out "_offset = _offset + _temp.n"))
                (progn
                  (w/append! out (.. "_result[" (number->string (- i offset)) " + _offset] = "))
@@ -554,7 +568,7 @@
        (with (meta (.> cat :meta))
          ;; If we're dealing with an expression then we emit the returner first. Statements just
          ;; return nil.
-         (when (= (.> meta :tag) "expr")
+         (unless (native/native-syntax-stmt? meta)
            (cond
              [(= ret "") (w/append! out "local _ = ")]
              [ret (w/append! out ret)]
@@ -565,15 +579,15 @@
 
          ;; Emit all entries. Numbers represent an argument, everything else is just
          ;; appended directly.
-         (let* [(contents (.> meta :contents))
-                (fold (.> meta :fold))
-                (count (.> meta :count))]
+         (let* [(contents (native/native-syntax meta))
+                (fold (native/native-syntax-fold meta))
+                (count (native/native-syntax-arity meta))]
            (letrec [(build (lambda (start end)
                              (for-each entry contents
                                (cond
                                  [(string? entry) (w/append! out entry)]
-                                 [(and (= fold "l") (= entry 1) (< start end)) (build start (pred end)) (set! start end)]
-                                 [(and (= fold "r") (= entry 2) (< start end)) (build (succ start) end)]
+                                 [(and (= fold "left") (= entry 1) (< start end)) (build start (pred end)) (set! start end)]
+                                 [(and (= fold "right") (= entry 2) (< start end)) (build (succ start) end)]
                                  [true (compile-expression (nth node (+ entry start)) out state)]))))]
              (build 1 (- (n node) count))))
 
@@ -581,7 +595,7 @@
          (when (.> cat :parens) (w/append! out ")"))
 
          ;; If we're dealing with a statement then return nil.
-         (when (and (/= (.> meta :tag) "expr") (/= ret ""))
+         (when (and (native/native-syntax-stmt? meta) (/= ret ""))
            (w/line! out)
            (w/append! out ret)
            (w/append! out "nil")
@@ -721,6 +735,19 @@
        (w/append! out "(")
        (compile-expression (nth node 2) out state)
        (w/append! out ")")]
+
+      ["wrap-list"
+       (when ret (w/append! out ret))
+       (when (.> cat :parens) (w/append! out "("))
+
+       (w/append! out "{tag=\"list\", n=")
+       (w/append! out (number->string (pred (n node))))
+       (for i 2 (n node) 1
+         (w/append! out ", ")
+         (compile-expression (nth node i) out state))
+       (w/append! out "}")
+
+       (when (.> cat :parens) (w/append! out ")"))]
 
       ["call-lambda"
        ;; If we have a direction invokation of a function then inline it
@@ -867,7 +894,7 @@
                             (push-escape-var! (.> (car args) :var) state)
                             (with (escs '())
                               (for-each arg args
-                                (push-cdr! escs (push-escape-var! (.> arg :var) state)))
+                                (push! escs (push-escape-var! (.> arg :var) state)))
                               (concat escs ", "))))
                  (unless (and (= (n vals) 1) (.> cat-lookup (car vals) :stmt))
                    (error! (.. "Expected statement, got something " (pretty zip))))

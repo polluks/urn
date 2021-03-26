@@ -96,19 +96,24 @@
   (or
     (not (list? node))
     (with (head (car node))
-      (if (symbol? head)
-        (with (func (.> head :var))
-          (cond
-            ;; Non-builtin functions will "always" return multiple values.
-            [(/= (scope/var-kind func) "builtin") false]
-            ;; Various literals will just return a single value
-            [(= func (builtin :lambda)) true]
-            [(= func (builtin :struct-literal)) true]
-            [(= func (builtin :quote)) true]
-            [(= func (builtin :syntax-quote)) true]
-            ;; Otherwise just assume it returns multiple values
-            [else false]))
-        false))))
+      (case (type head)
+        ["symbol"
+         (with (func (.> head :var))
+           (cond
+             ;; Non-builtin functions will "always" return multiple values.
+             [(/= (scope/var-kind func) "builtin") false]
+             ;; Various literals will just return a single value
+             [(= func (builtin :lambda)) true]
+             [(= func (builtin :struct-literal)) true]
+             [(= func (builtin :quote)) true]
+             [(= func (builtin :syntax-quote)) true]
+             ;; Otherwise just assume it returns multiple values
+             [else false]))]
+        ["list"
+         (and
+           (builtin? (car head) :lambda)
+           (and (>= (n head) 3) (single-return? (last head))))]
+        [_ false]))))
 
 (defun fast-all (fn li i)
   "A fast implementation of all which starts from an offset.
@@ -151,12 +156,12 @@
         (cond
           ;; If we have no corresponding argument, then push a single value
           [(not arg)
-           (push-cdr! res (list '() (list (nth vals vi))))
+           (push! res (list '() (list (nth vals vi))))
            (recur ai (succ vi))]
 
           ;; If we've no more values, then just push an empty list
           [(> vi vn)
-           (push-cdr! res (list (list arg) '()))
+           (push! res (list (list arg) '()))
            (recur (succ ai) vi)]
 
           [(scope/var-variadic? (.> arg :var))
@@ -165,18 +170,18 @@
              ;; all in and continue.
              (with (v-end (- vn (- an ai)))
                (when (< v-end vi) (set! v-end (pred vi)))
-               (push-cdr! res (list (list arg) (slice vals vi v-end)))
+               (push! res (list (list arg) (slice vals vi v-end)))
                (recur (succ ai) (succ v-end)))
              ;; We've no clue how many arguments are here, so zip em all
              ;; up and exit.
-             (push-cdr! res (list (slice args ai) (slice vals vi))))]
+             (push! res (list (slice args ai) (slice vals vi))))]
 
           ;; Just your bog standard argument -> value mapping
           [(or (< vi vn) (single-return? (nth vals vi)))
-           (push-cdr! res (list (list arg) (list (nth vals vi))))
+           (push! res (list (list arg) (list (nth vals vi))))
            (recur (succ ai) (succ vi))]
 
           ;; Last value and we don't know how many there are. Let's
           ;; store all arguments to this one value
           [true
-           (push-cdr! res (list (slice args ai) (list (nth vals vi))))])))))
+           (push! res (list (slice args ai) (list (nth vals vi))))])))))
